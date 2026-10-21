@@ -1,0 +1,3829 @@
+﻿/* Shared Pocket Solutions POS theme. Dark is the default. */
+
+html[data-theme] {
+  --ps-font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ps-bg: #0e1014;
+  --ps-bg-elev: #15181e;
+  --ps-sidebar: #12141a;
+  --ps-card: #1b1e25;
+  --ps-card-2: #22262e;
+  --ps-input: #22262e;
+  --ps-line: #2a2e36;
+  --ps-text: #f4f6f8;
+  --ps-muted: #9aa1ab;
+  --ps-yellow: #f5b400;
+  --ps-yellow-ink: #1a1a1a;
+  --ps-blue: #2f6fed;
+  --ps-green: #2fce74;
+  --ps-danger: #f07178;
+  --ps-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --ps-top: #0e1014;
+  --ps-row: rgba(255, 255, 255, 0.035);
+  --ps-overlay: rgba(0, 0, 0, 0.55);
+  --bg: var(--ps-bg);
+  --card: var(--ps-card);
+  --line: var(--ps-line);
+  --text: var(--ps-text);
+  --muted: var(--ps-muted);
+  --yellow: var(--ps-yellow);
+  --green: var(--ps-green);
+  --blue: var(--ps-blue);
+  --danger: var(--ps-danger);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --ps-bg: #f3f5f8;
+  --ps-bg-elev: #ffffff;
+  --ps-sidebar: #ffffff;
+  --ps-card: #ffffff;
+  --ps-card-2: #f4f6f9;
+  --ps-input: #ffffff;
+  --ps-line: #e4e7ec;
+  --ps-text: #14171c;
+  --ps-muted: #667085;
+  --ps-yellow: #f5b400;
+  --ps-yellow-ink: #1a1a1a;
+  --ps-blue: #2f6fed;
+  --ps-green: #178a48;
+  --ps-danger: #d64545;
+  --ps-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+  --ps-top: #ffffff;
+  --ps-row: rgba(16, 24, 40, 0.035);
+  --ps-overlay: rgba(16, 24, 40, 0.45);
+  --bg: var(--ps-bg);
+  --card: var(--ps-card);
+  --line: var(--ps-line);
+  --text: var(--ps-text);
+  --muted: var(--ps-muted);
+  --yellow: var(--ps-yellow);
+  --green: var(--ps-green);
+  --blue: var(--ps-blue);
+  --danger: var(--ps-danger);
+}
+
+html[data-theme] body.ps-app,
+html[data-theme] body.ps-login,
+html[data-theme] body.ps-pos {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ps-bg);
+  color: var(--ps-text);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+/* Stronger than page rules such as body, button { font-family: Arial }. */
+html[data-theme] body.ps-app button,
+html[data-theme] body.ps-app input,
+html[data-theme] body.ps-app select,
+html[data-theme] body.ps-app textarea,
+html[data-theme] body.ps-app table,
+html[data-theme] body.ps-app th,
+html[data-theme] body.ps-app td,
+html[data-theme] body.ps-app a,
+html[data-theme] body.ps-app label,
+html[data-theme] body.ps-app h1,
+html[data-theme] body.ps-app h2,
+html[data-theme] body.ps-app h3,
+html[data-theme] body.ps-app .ps-side,
+html[data-theme] body.ps-app .ps-nav,
+html[data-theme] body.ps-app .ps-select,
+html[data-theme] body.ps-app .ps-select-trigger,
+html[data-theme] body.ps-app .ps-select-value,
+html[data-theme] body.ps-app .ps-select-option,
+html[data-theme] body.ps-app .ps-select-option-label,
+html[data-theme] body.ps-login button,
+html[data-theme] body.ps-login input,
+html[data-theme] body.ps-login select,
+html[data-theme] body.ps-login textarea,
+html[data-theme] body.ps-login a,
+html[data-theme] body.ps-login label,
+html[data-theme] body.ps-login h1,
+html[data-theme] body.ps-login h2,
+html[data-theme] body.ps-login h3,
+html[data-theme] body.ps-pos button,
+html[data-theme] body.ps-pos input,
+html[data-theme] body.ps-pos select,
+html[data-theme] body.ps-pos textarea,
+html[data-theme] body.ps-pos table,
+html[data-theme] body.ps-pos th,
+html[data-theme] body.ps-pos td,
+html[data-theme] body.ps-pos a,
+html[data-theme] body.ps-pos label,
+html[data-theme] body.ps-pos h1,
+html[data-theme] body.ps-pos h2,
+html[data-theme] body.ps-pos h3,
+html[data-theme] body.ps-pos .pname,
+html[data-theme] body.ps-pos .pprice,
+html[data-theme] body.ps-pos .pstock,
+html[data-theme] body.ps-pos .brand,
+html[data-theme] body.ps-pos .cat,
+html[data-theme] body.ps-pos .kicker,
+html[data-theme] body.ps-pos .hint,
+html[data-theme] body.ps-pos .user,
+html[data-theme] body.ps-pos .total {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+html[data-theme] body.ps-app {
+  display: block;
+  /* Spacing scale (Shadcn-like rhythm; rem so it tracks root font size) */
+  --ps-space-1: 0.25rem;   /* 4 */
+  --ps-space-2: 0.5rem;    /* 8 */
+  --ps-space-3: 0.75rem;   /* 12 */
+  --ps-space-4: 1rem;      /* 16 */
+  --ps-space-5: 1.25rem;   /* 20 */
+  --ps-space-6: 1.5rem;    /* 24 */
+  --ps-space-8: 2rem;      /* 32 */
+  --ps-gap: var(--ps-space-4);
+  --ps-stack-gap: var(--ps-space-5);
+  --ps-page-pad-x: var(--ps-space-6);
+  --ps-page-pad-y: var(--ps-space-5);
+  --ps-page-pad-bottom: var(--ps-space-8);
+  --ps-control-gap: var(--ps-space-3);
+}
+
+html[data-theme] body.ps-app *,
+html[data-theme] body.ps-login *,
+html[data-theme] body.ps-pos * {
+  box-sizing: border-box;
+}
+
+/* App shell */
+.ps-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--ps-bg);
+  color: var(--ps-text);
+}
+
+.ps-side {
+  width: 248px;
+  flex: 0 0 248px;
+  background: var(--ps-sidebar);
+  border-right: 1px solid var(--ps-line);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: 20;
+}
+
+.ps-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 12px;
+}
+
+.ps-mark {
+  height: 44px;
+  width: auto;
+  max-width: 148px;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ps-yellow-ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  font-weight: 800;
+  flex: 0 0 auto;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+.ps-mark img {
+  display: block;
+  height: 36px;
+  width: auto;
+  max-width: 136px;
+  object-fit: contain;
+}
+
+.ps-brand-copy { min-width: 0; }
+.ps-brand-name {
+  font-weight: 800;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps-brand-sub {
+  color: var(--ps-muted);
+  font-size: 12px;
+}
+
+.ps-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow: auto;
+  flex: 1;
+}
+
+.ps-nav a,
+.ps-side-foot a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--ps-muted);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+
+.ps-nav a svg,
+.ps-side-foot a svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.ps-nav a:hover,
+.ps-side-foot a:hover {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+}
+
+.ps-nav a.is-on {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+.ps-nav a.is-on:hover {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+/* Sidebar section headings (health-check 2026-10-13) */
+.ps-nav .ps-nav-group {
+  margin: 12px 12px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ps-muted);
+  opacity: 0.75;
+}
+.ps-nav .ps-nav-group:first-child {
+  margin-top: 4px;
+}
+.ps-nav a {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.ps-side-foot {
+  padding: 8px 12px 16px;
+  border-top: 1px solid var(--ps-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ps-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--ps-bg);
+}
+
+.ps-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--ps-top);
+  border-bottom: 1px solid var(--ps-line);
+  position: sticky;
+  top: 0;
+  z-index: 15;
+}
+
+.ps-top-left,
+.ps-top-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ps-burger {
+  display: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--ps-line);
+  background: var(--ps-card);
+  color: var(--ps-text);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.ps-branch {
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ps-user,
+button.user-chip.ps-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+/* Shared account menu (shell header + POS user chip) */
+.user-chip-wrap,
+.ps-account-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+button.user-chip {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+button.user-chip:focus-visible {
+  outline: 2px solid var(--ps-yellow);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.user-chip-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 220px;
+  z-index: 40;
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+  color: var(--ps-text);
+}
+
+.user-chip-menu[hidden] {
+  display: none !important;
+}
+
+.user-chip-menu a,
+.user-chip-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ps-text);
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  line-height: 1.3;
+}
+
+.user-chip-menu a:hover,
+.user-chip-menu button:hover:not(:disabled),
+.user-chip-menu a:focus-visible,
+.user-chip-menu button:focus-visible:not(:disabled) {
+  background: var(--ps-card-2);
+  outline: none;
+}
+
+.user-chip-menu button:disabled,
+.user-chip-menu [aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.user-chip-menu-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ps-muted);
+  line-height: 1.25;
+}
+
+.user-chip-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--ps-line);
+}
+
+.ps-logout-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: var(--ps-overlay, rgba(0, 0, 0, 0.55));
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.ps-logout-overlay.show {
+  display: flex;
+}
+
+.ps-logout-sheet {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  width: min(420px, 100%);
+  border: 1px solid var(--ps-line);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: var(--ps-shadow, 0 10px 28px rgba(0, 0, 0, 0.2));
+}
+
+.ps-logout-sheet h3 {
+  margin: 0 0 0.5rem;
+  color: var(--ps-text);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.ps-logout-hint {
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  margin: 0 0 1.25rem;
+}
+
+.ps-logout-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+}
+
+@media (min-width: 400px) {
+  .ps-logout-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}
+
+.ps-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border: 0;
+  border-radius: 0.5rem;
+  min-height: 2.5rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin: 0;
+}
+
+@media (min-width: 400px) {
+  .ps-logout-btn {
+    width: auto;
+    min-width: 5.5rem;
+  }
+}
+
+.ps-logout-btn-primary {
+  background: var(--ps-danger);
+  color: #fff;
+}
+
+.ps-logout-btn-secondary {
+  background: transparent;
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+/* Beat shell "all buttons are yellow CTAs" for account chrome */
+html[data-theme] body.ps-app button.user-chip {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-radius: 8px;
+  min-height: 0;
+  padding: 0;
+  font-weight: inherit;
+  font-size: inherit;
+}
+
+html[data-theme] body.ps-app .user-chip-menu button {
+  background: transparent;
+  color: var(--ps-text);
+  border: 0;
+  border-radius: 8px;
+  min-height: 0;
+  padding: 10px 12px;
+  font-weight: 600;
+  width: 100%;
+  text-align: left;
+}
+
+html[data-theme] body.ps-app .user-chip-menu button:hover:not(:disabled),
+html[data-theme] body.ps-app .user-chip-menu button:focus-visible:not(:disabled) {
+  background: var(--ps-card-2);
+}
+
+html[data-theme] body.ps-app .ps-logout-btn-primary {
+  background: var(--ps-danger);
+  color: #fff;
+  border: 0;
+  min-height: 2.5rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+}
+
+html[data-theme] body.ps-app .ps-logout-btn-secondary {
+  background: transparent;
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  min-height: 2.5rem;
+  height: 2.5rem;
+  padding: 0 1rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+}
+
+html[data-theme] body.ps-app .ps-logout-btn-secondary:hover {
+  background: var(--ps-card-2);
+}
+
+.ps-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  background: var(--ps-card-2);
+  border: 1px solid var(--ps-line);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 12px;
+  color: var(--ps-text);
+}
+
+.ps-user-name {
+  font-weight: 700;
+  font-size: 13px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ps-user-role {
+  color: var(--ps-muted);
+  font-size: 12px;
+}
+
+.ps-theme-switch {
+  display: inline-flex;
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.ps-theme-switch button {
+  border: 0;
+  background: transparent;
+  color: var(--ps-muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 0;
+  width: auto;
+  margin: 0;
+}
+
+.ps-theme-switch button.is-on {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+.ps-content,
+.ps-main > .content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--ps-stack-gap, 1.25rem);
+  padding: var(--ps-page-pad-y, 1.25rem) var(--ps-page-pad-x, 1.5rem) var(--ps-page-pad-bottom, 2rem);
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  container-type: inline-size;
+  container-name: ps-page;
+}
+
+/* Page stack: gap owns vertical rhythm; kill leftover bottom margins on blocks */
+html[data-theme] body.ps-app .ps-content > h1,
+html[data-theme] body.ps-app .ps-content > h2,
+html[data-theme] body.ps-app .ps-content > h3,
+html[data-theme] body.ps-app .ps-content > p,
+html[data-theme] body.ps-app .ps-content > .ps-page-lead,
+html[data-theme] body.ps-app .ps-content > .hint,
+html[data-theme] body.ps-app .ps-content > .ps-muted,
+html[data-theme] body.ps-app .ps-content > .muted,
+html[data-theme] body.ps-app .ps-content > .ps-card,
+html[data-theme] body.ps-app .ps-content > .ps-panel,
+html[data-theme] body.ps-app .ps-content > .ps-alert,
+html[data-theme] body.ps-app .ps-content > .ps-table-wrap,
+html[data-theme] body.ps-app .ps-content > .ps-link-row,
+html[data-theme] body.ps-app .ps-content > .ps-section,
+html[data-theme] body.ps-app .ps-content > .ps-toolbar,
+html[data-theme] body.ps-app .ps-content > .ps-split,
+html[data-theme] body.ps-app .ps-content > .ps-kpi-grid,
+html[data-theme] body.ps-app .ps-content > .ps-empty,
+html[data-theme] body.ps-app .ps-content > .error,
+html[data-theme] body.ps-app .ps-content > .success,
+html[data-theme] body.ps-app .ps-content > .alert,
+html[data-theme] body.ps-app .ps-content > form,
+html[data-theme] body.ps-app .ps-content > table,
+html[data-theme] body.ps-app .ps-content > .filter-form,
+html[data-theme] body.ps-app .ps-content > .search-form,
+html[data-theme] body.ps-app .ps-main > .content > h1,
+html[data-theme] body.ps-app .ps-main > .content > .ps-page-lead,
+html[data-theme] body.ps-app .ps-main > .content > .ps-card,
+html[data-theme] body.ps-app .ps-main > .content > .ps-alert,
+html[data-theme] body.ps-app .ps-main > .content > form,
+html[data-theme] body.ps-app .ps-main > .content > table {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* Title + lead sit closer than major blocks (stack gap) */
+html[data-theme] body.ps-app .ps-content > h1 + .ps-page-lead,
+html[data-theme] body.ps-app .ps-content > h1 + .hint,
+html[data-theme] body.ps-app .ps-content > h1 + p.ps-muted,
+html[data-theme] body.ps-app .ps-main > .content > h1 + .ps-page-lead {
+  margin-top: calc(var(--ps-space-2) - var(--ps-stack-gap));
+}
+
+/* Hidden CSRF / form= host shells must not consume stack gap */
+html[data-theme] body.ps-app .ps-content > form:not(:has(input:not([type="hidden"]))):not(:has(select)):not(:has(textarea)):not(:has(button)):not(:has(label)),
+html[data-theme] body.ps-app .ps-main > .content > form:not(:has(input:not([type="hidden"]))):not(:has(select)):not(:has(textarea)):not(:has(button)):not(:has(label)) {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ps-search {
+  flex: 1;
+  max-width: 460px;
+  margin: 0 12px;
+}
+
+.ps-search input {
+  width: 100%;
+  border-radius: 999px;
+  background: var(--ps-input);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  min-height: 40px;
+  padding: 8px 16px;
+}
+
+html[data-theme] body.ps-app .navbar {
+  display: none;
+}
+
+html[data-theme] body.ps-app .content {
+  margin-left: 0;
+  width: auto;
+  padding: 0;
+  flex-grow: 1;
+}
+
+html[data-theme] body.ps-app .ps-content .content {
+  margin: 0;
+  padding: 0;
+  width: auto;
+}
+
+html[data-theme] body.ps-app .container {
+  max-width: none;
+  width: auto;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  padding: 0;
+  color: var(--ps-text);
+}
+
+html[data-theme] body.ps-app h1,
+html[data-theme] body.ps-app h2,
+html[data-theme] body.ps-app h3,
+html[data-theme] body.ps-pos h1,
+html[data-theme] body.ps-pos h2,
+html[data-theme] body.ps-pos h3,
+html[data-theme] body.ps-login h2 {
+  color: var(--ps-text);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 800;
+  margin: 0 0 var(--ps-gap);
+}
+
+html[data-theme] body.ps-app h1,
+html[data-theme] body.ps-pos h1 {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+html[data-theme] body.ps-app h2,
+html[data-theme] body.ps-app h3,
+html[data-theme] body.ps-pos h2,
+html[data-theme] body.ps-pos h3,
+html[data-theme] body.ps-login h2 {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+html[data-theme] body.ps-app p,
+html[data-theme] body.ps-app li,
+html[data-theme] body.ps-app td,
+html[data-theme] body.ps-login p,
+html[data-theme] body.ps-pos p {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+html[data-theme] body.ps-app p,
+html[data-theme] body.ps-app label,
+html[data-theme] body.ps-app li,
+html[data-theme] body.ps-app td,
+html[data-theme] body.ps-app th {
+  color: var(--ps-text);
+}
+
+/* Card chrome for admin forms. Table forms (GRV, stock movement) stay block. */
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)),
+html[data-theme] body.ps-app .content > form:not(:has(table)),
+html[data-theme] body.ps-app .container > form:not(:has(table)),
+html[data-theme] body.ps-app .search-container form,
+html[data-theme] body.ps-app .filter-form,
+html[data-theme] body.ps-app .search-form {
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 16px;
+  padding: var(--ps-gap);
+  margin: 0 0 var(--ps-gap);
+  max-width: none;
+  box-shadow: var(--ps-shadow);
+  gap: var(--ps-gap);
+  align-items: center;
+}
+
+/* Search and filter bars: inputs and the button share one row. No label columns. */
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)),
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)),
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)),
+html[data-theme] body.ps-app .search-container form,
+html[data-theme] body.ps-app .filter-form:not(:has(> label)),
+html[data-theme] body.ps-app .search-form {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+/* Label then control, as siblings: two pairs per row, label stays with the next field. */
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label),
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label),
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label),
+html[data-theme] body.ps-app .filter-form:has(> label) {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) minmax(120px, 160px) minmax(0, 1fr);
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(input)):not(:has(select)):not(:has(textarea)),
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(input)):not(:has(select)):not(:has(textarea)),
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(input)):not(:has(select)):not(:has(textarea)) {
+  display: inline-flex;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0 var(--ps-gap) var(--ps-gap) 0;
+  box-shadow: none;
+}
+
+html[data-theme] body.ps-app .ps-content table form,
+html[data-theme] body.ps-app .content table form,
+html[data-theme] body.ps-app .container table form,
+html[data-theme] body.ps-app .ps-content tr form,
+html[data-theme] body.ps-app .content tr form,
+html[data-theme] body.ps-app .container tr form,
+html[data-theme] body.ps-app .ps-content td form,
+html[data-theme] body.ps-app .content td form,
+html[data-theme] body.ps-app .container td form,
+html[data-theme] body.ps-app .ps-content form[style*="inline"],
+html[data-theme] body.ps-app .content form[style*="inline"],
+html[data-theme] body.ps-app .container form[style*="inline"],
+html[data-theme] body.ps-app td form,
+html[data-theme] body.ps-app form[style*="inline"] {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: var(--ps-gap);
+  align-items: center;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+
+html[data-theme] body.ps-app form[style*="inline"] {
+  width: auto;
+}
+
+html[data-theme] body.ps-app .ps-content td form,
+html[data-theme] body.ps-app .content td form,
+html[data-theme] body.ps-app .container td form,
+html[data-theme] body.ps-app td form {
+  width: 100%;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)) > label,
+html[data-theme] body.ps-app .content > form:not(:has(table)) > label,
+html[data-theme] body.ps-app .container > form:not(:has(table)) > label,
+html[data-theme] body.ps-app .filter-form > label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ps-muted);
+  margin: 0;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .filter-form:has(> label) > input,
+html[data-theme] body.ps-app .filter-form:has(> label) > select,
+html[data-theme] body.ps-app .filter-form:has(> label) > textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > input,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > select,
+html[data-theme] body.ps-app .filter-form:has(> label) > input,
+html[data-theme] body.ps-app .filter-form:has(> label) > select {
+  height: 42px;
+}
+
+html[data-theme] body.ps-app form[style*="inline"] > input,
+html[data-theme] body.ps-app form[style*="inline"] > button {
+  width: auto;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app form[style*="inline"] > input:not([type="hidden"]) {
+  min-width: min(160px, 100%);
+  flex: 1 1 180px;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > label:has(+ textarea),
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > label:has(+ textarea),
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > label:has(+ textarea),
+html[data-theme] body.ps-app .filter-form:has(> label) > label:has(+ textarea),
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > label:has(+ input[type="file"]),
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > label:has(+ input[type="file"]),
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > label:has(+ input[type="file"]),
+html[data-theme] body.ps-app .filter-form:has(> label) > label:has(+ input[type="file"]) {
+  grid-column: 1;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > textarea,
+html[data-theme] body.ps-app .filter-form:has(> label) > textarea,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > input[type="file"],
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > input[type="file"],
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > input[type="file"],
+html[data-theme] body.ps-app .filter-form:has(> label) > input[type="file"] {
+  grid-column: 2 / -1;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > button,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > input[type="submit"],
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > input[type="button"],
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > button,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > input[type="submit"],
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > input[type="button"],
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > button,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > input[type="submit"],
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > input[type="button"],
+html[data-theme] body.ps-app .filter-form:has(> label) > button,
+html[data-theme] body.ps-app .filter-form:has(> label) > input[type="submit"],
+html[data-theme] body.ps-app .filter-form:has(> label) > input[type="button"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+  width: auto;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)) > div,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)) > p,
+html[data-theme] body.ps-app .content > form:not(:has(table)) > div,
+html[data-theme] body.ps-app .content > form:not(:has(table)) > p,
+html[data-theme] body.ps-app .container > form:not(:has(table)) > div,
+html[data-theme] body.ps-app .container > form:not(:has(table)) > p,
+html[data-theme] body.ps-app .filter-form > div,
+html[data-theme] body.ps-app .filter-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app form > .error:empty,
+html[data-theme] body.ps-app form > .success:empty {
+  display: none;
+}
+
+html[data-theme] body.ps-app input[type="text"],
+html[data-theme] body.ps-app input[type="password"],
+html[data-theme] body.ps-app input[type="number"],
+html[data-theme] body.ps-app input[type="date"],
+html[data-theme] body.ps-app input[type="email"],
+html[data-theme] body.ps-app input[type="search"],
+html[data-theme] body.ps-app input[type="file"],
+html[data-theme] body.ps-app select,
+html[data-theme] body.ps-app textarea {
+  background: var(--ps-input);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 12px;
+  padding: 8px 16px;
+  min-height: 42px;
+  max-width: 100%;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html[data-theme] body.ps-app select {
+  width: auto;
+  min-width: min(180px, 100%);
+  height: 42px;
+  padding: 0 40px 0 12px;
+  border-radius: 8px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 40px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px 16px;
+}
+
+html[data-theme="dark"] body.ps-app select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239aa1ab' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html[data-theme="light"] body.ps-app select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html[data-theme] body.ps-app select::-ms-expand {
+  display: none;
+}
+
+html[data-theme] body.ps-app select:has(> option[value=""]:checked) {
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .modal select {
+  width: 100%;
+  min-width: 0;
+}
+
+html[data-theme] body.ps-app textarea {
+  min-height: 90px;
+}
+
+html[data-theme] body.ps-app input::placeholder,
+html[data-theme] body.ps-app textarea::placeholder {
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app td input {
+  width: 100%;
+  min-width: 72px;
+  min-height: 36px;
+  padding: 8px;
+}
+
+html[data-theme] body.ps-app td select {
+  width: 100%;
+  min-width: 180px;
+  max-width: none;
+  min-height: 42px;
+  height: 42px;
+  padding: 0 40px 0 12px;
+}
+
+html[data-theme] body.ps-app td form {
+  width: 100%;
+}
+
+html[data-theme] body.ps-app td form > select {
+  flex: 1 1 180px;
+  width: 100%;
+  min-width: 180px;
+}
+
+html[data-theme] body.ps-app button,
+html[data-theme] body.ps-app input[type="submit"],
+html[data-theme] body.ps-app input[type="button"] {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  border: 0;
+  border-radius: 12px;
+  min-height: 42px;
+  padding: 10px 14px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+html[data-theme] body.ps-app .back-button,
+html[data-theme] body.ps-app .btn-secondary,
+html[data-theme] body.ps-app #btnCancel {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-app .export-button,
+html[data-theme] body.ps-app .print-button,
+html[data-theme] body.ps-app .new-order-button,
+html[data-theme] body.ps-app .create-button,
+html[data-theme] body.ps-app .info-button,
+html[data-theme] body.ps-app .load-all-button,
+html[data-theme] body.ps-app .new-expense-button,
+html[data-theme] body.ps-app .new-stock-button,
+html[data-theme] body.ps-app .search-button,
+html[data-theme] body.ps-app .backup-button,
+html[data-theme] body.ps-app .template-button,
+html[data-theme] body.ps-app .btn-primary,
+html[data-theme] body.ps-app #btnSave {
+  background: var(--ps-blue);
+  color: #fff;
+}
+
+html[data-theme] body.ps-app .new-install-button,
+html[data-theme] body.ps-app #logout-button {
+  background: var(--ps-danger);
+  color: #fff;
+}
+
+html[data-theme] body.ps-app .ps-theme-switch button {
+  background: transparent;
+  color: var(--ps-muted);
+  min-height: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+html[data-theme] body.ps-app .ps-theme-switch button.is-on {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+html[data-theme] body.ps-app table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--ps-shadow);
+  margin: 0 0 var(--ps-gap);
+}
+
+html[data-theme] body.ps-app th,
+html[data-theme] body.ps-app td {
+  border: 0;
+  border-bottom: 1px solid var(--ps-line);
+  padding: var(--ps-gap);
+  text-align: left;
+  vertical-align: middle;
+}
+
+html[data-theme] body.ps-app tr:last-child td {
+  border-bottom: 0;
+}
+
+html[data-theme] body.ps-app th {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+html[data-theme] body.ps-app tbody tr:hover td {
+  background: var(--ps-row);
+}
+
+html[data-theme] body.ps-app a {
+  color: var(--ps-blue);
+}
+
+html[data-theme] body.ps-app .ps-nav a,
+html[data-theme] body.ps-app .ps-side-foot a {
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-nav a.is-on {
+  color: var(--ps-yellow-ink);
+}
+
+html[data-theme] body.ps-app .error:not(:empty),
+html[data-theme] body.ps-app .alert:not(:empty) {
+  background: rgba(240, 113, 120, 0.12);
+  color: var(--ps-danger);
+  border: 1px solid rgba(240, 113, 120, 0.35);
+  border-radius: 12px;
+  padding: 8px 16px;
+  margin: 0 0 var(--ps-gap);
+}
+
+html[data-theme] body.ps-app .success:not(:empty) {
+  background: rgba(47, 206, 116, 0.12);
+  color: var(--ps-green);
+  border: 1px solid rgba(47, 206, 116, 0.35);
+  border-radius: 12px;
+  padding: 8px 16px;
+  margin: 0 0 var(--ps-gap);
+}
+
+html[data-theme] body.ps-app form > .error:not(:empty),
+html[data-theme] body.ps-app form > .success:not(:empty) {
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .suggestions,
+html[data-theme] body.ps-app #suggestions {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 12px;
+  box-shadow: var(--ps-shadow);
+}
+
+html[data-theme] body.ps-app #item-list,
+html[data-theme] body.ps-app #cart {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 16px;
+}
+
+html[data-theme] body.ps-app .modal-overlay {
+  background: var(--ps-overlay);
+  z-index: 10040;
+}
+
+html[data-theme] body.ps-app #branchModalOverlay .error[hidden] {
+  display: none;
+}
+
+html[data-theme] body.ps-app .modal {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 16px;
+  box-shadow: var(--ps-shadow);
+}
+
+html[data-theme] body.ps-app .modal h3,
+html[data-theme] body.ps-app .modal label {
+  color: var(--ps-text);
+}
+
+/* 2026-10-15: Select Branch dialog (admin_dashboard.php) — real padding, width and spacing. */
+/* The backdrop covers the whole screen and centres the dialog (before: it sat as a grey band at the page bottom). */
+html[data-theme] body.ps-app #branchModalOverlay {
+  position: fixed;
+  inset: 0;
+  display: none; /* admin_dashboard.php JS sets display:flex to open */
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+}
+html[data-theme] body.ps-app #branchModalOverlay .modal {
+  width: calc(100vw - 32px); /* phones / tablets: near full width */
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+/* Desktop (sidebar visible, 248px): card = 50% of the content area, centred over it. */
+@media (min-width: 901px) {
+  html[data-theme] body.ps-app #branchModalOverlay {
+    padding-left: calc(248px + 16px);
+  }
+  html[data-theme] body.ps-app #branchModalOverlay .modal {
+    width: calc((100vw - 248px) * 0.5);
+    min-width: 380px;
+  }
+}
+html[data-theme] body.ps-app #branchModalOverlay .modal h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+html[data-theme] body.ps-app #branchModalOverlay .ps-branch-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+html[data-theme] body.ps-app #branchModalOverlay .ps-branch-field label {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-app #branchModalOverlay .ps-branch-field select {
+  margin: 0;
+  min-height: 44px;
+}
+html[data-theme] body.ps-app #branchModalOverlay .error {
+  margin: 0;
+}
+html[data-theme] body.ps-app #branchModalOverlay .actions {
+  margin: 6px 0 0;
+  justify-content: flex-end;
+  gap: 10px;
+}
+html[data-theme] body.ps-app #branchModalOverlay .actions .btn {
+  min-width: 112px;
+}
+
+.ps-nav-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .ps-burger { display: inline-grid; place-items: center; }
+  .ps-side {
+    position: fixed;
+    left: 0;
+    top: 0;
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--ps-shadow);
+  }
+  body.ps-nav-open .ps-side { transform: none; }
+  body.ps-nav-open .ps-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--ps-overlay);
+    z-index: 19;
+  }
+  .ps-user-copy { display: none; }
+  html[data-theme] body.ps-app {
+    --ps-page-pad-x: var(--ps-space-4);
+    --ps-page-pad-y: var(--ps-space-4);
+    --ps-page-pad-bottom: var(--ps-space-6);
+    --ps-stack-gap: var(--ps-space-4);
+  }
+  .ps-content,
+  .ps-main > .content {
+    padding: var(--ps-page-pad-y) var(--ps-page-pad-x) var(--ps-page-pad-bottom);
+  }
+}
+
+@media print {
+  .ps-side, .ps-top, .ps-nav-backdrop { display: none !important; }
+  html[data-theme] body.ps-app {
+    background: #fff;
+    color: #111;
+  }
+  html[data-theme] body.ps-app table,
+  html[data-theme] body.ps-app th,
+  html[data-theme] body.ps-app td {
+    background: #fff;
+    color: #111;
+    box-shadow: none;
+  }
+}
+
+/* Login - split frame */
+html[data-theme] body.ps-login {
+  display: block;
+  min-height: 100vh;
+  padding: 0;
+  background: var(--ps-bg);
+}
+
+.ps-login-split {
+  display: flex;
+  min-height: 100vh;
+}
+
+.ps-login-hero {
+  position: relative;
+  flex: 1 1 54%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 48px 64px;
+  overflow: hidden;
+  color: #fff;
+  background:
+    radial-gradient(120% 80% at 100% 0%, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(155deg, #4b5bdb 0%, #3038b8 42%, #241f78 100%);
+}
+
+.ps-login-hero::before,
+.ps-login-hero::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+}
+
+.ps-login-hero::before {
+  width: 920px;
+  height: 920px;
+  right: -280px;
+  bottom: -460px;
+  box-shadow:
+    0 0 0 70px rgba(255, 255, 255, 0.05),
+    0 0 0 150px rgba(255, 255, 255, 0.04);
+}
+
+.ps-login-hero::after {
+  width: 640px;
+  height: 640px;
+  left: -220px;
+  top: -280px;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.ps-login-logo {
+  position: relative;
+  z-index: 1;
+  display: block;
+  height: 84px;
+  width: auto;
+  max-width: min(360px, 100%);
+  object-fit: contain;
+  background: #fff;
+  border-radius: 14px;
+  padding: 8px 12px;
+  margin-bottom: 36px;
+}
+
+.ps-login-hero h1 {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  margin: 0 0 18px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: clamp(42px, 5vw, 64px);
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  overflow-wrap: break-word;
+}
+
+.ps-login-hero p {
+  position: relative;
+  z-index: 1;
+  max-width: min(420px, 100%);
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.9);
+  overflow-wrap: break-word;
+}
+
+html[data-theme] body.ps-login .ps-login-hero .ps-login-copy {
+  position: static;
+  z-index: 1;
+  max-width: min(420px, 100%);
+  margin: 20px 0 0;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ps-login-panel {
+  flex: 1 1 46%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--ps-bg);
+  color: var(--ps-text);
+  padding: 28px 40px 40px;
+}
+
+.ps-login-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.ps-login-card {
+  width: min(420px, 100%);
+  margin: auto;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 12px 8px 8px;
+  text-align: left;
+}
+
+.ps-login-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 36px;
+}
+
+.ps-login-wordmark img {
+  height: 48px;
+  width: auto;
+  max-width: 180px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 10px;
+  padding: 4px 8px;
+  box-shadow: 0 0 0 1px var(--ps-line);
+}
+
+.ps-login-wordmark span {
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--ps-text);
+}
+
+.ps-login-card h2 {
+  margin: 0 0 28px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--ps-text);
+}
+
+.ps-login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.ps-login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ps-login-field span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-login input[type="text"],
+html[data-theme] body.ps-login input[type="password"] {
+  width: 100%;
+  background: transparent;
+  color: var(--ps-text);
+  border: 0;
+  border-bottom: 1px solid var(--ps-line);
+  border-radius: 0;
+  padding: 10px 0 12px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html[data-theme] body.ps-login input[type="text"]:focus,
+html[data-theme] body.ps-login input[type="password"]:focus {
+  outline: none;
+  border-bottom-color: var(--ps-blue);
+}
+
+html[data-theme] body.ps-login input[type="submit"] {
+  background: #14171c;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  min-height: 48px;
+  margin-top: 8px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+html[data-theme="dark"] body.ps-login input[type="submit"] {
+  background: var(--ps-text);
+  color: var(--ps-bg);
+}
+
+.ps-login-card .error,
+.ps-login-card .alert {
+  margin-top: 16px;
+  background: rgba(240, 113, 120, 0.12);
+  color: var(--ps-danger);
+  border: 1px solid rgba(240, 113, 120, 0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+@media (max-width: 860px) {
+  .ps-login-hero {
+    display: none;
+  }
+
+  .ps-login-panel {
+    min-height: 100vh;
+    padding: 20px 20px 32px;
+  }
+}
+
+/* POS screen */
+html[data-theme] body.ps-pos .top {
+  background: var(--ps-top);
+}
+
+html[data-theme] body.ps-pos .search,
+html[data-theme] body.ps-pos input.field {
+  background: var(--ps-input);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-pos .order,
+html[data-theme] body.ps-pos .nav {
+  background: var(--ps-bg-elev);
+}
+
+html[data-theme] body.ps-pos .step button {
+  background: var(--ps-card-2);
+  color: var(--ps-yellow);
+}
+
+html[data-theme] body.ps-pos .btn-gray {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+}
+
+/* POS overlays: .modal is the full-screen backdrop (not the card - that differs from .ps-app) */
+html[data-theme] body.ps-pos .modal {
+  background: var(--ps-overlay);
+}
+
+html[data-theme] body.ps-pos .sheet {
+  background: var(--ps-card);
+  color: var(--ps-text);
+}
+
+html[data-theme] body.ps-pos .ps-theme-switch button {
+  width: auto;
+  margin-top: 0;
+  min-height: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+html[data-theme] body.ps-pos .user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ps-muted);
+  font-size: 13px;
+  line-height: 1.25;
+  text-align: right;
+  min-height: 48px; /* match .search control height in .top */
+}
+
+html[data-theme] body.ps-pos .user-chip .user {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  line-height: 1.25;
+  min-width: 0;
+}
+
+html[data-theme] body.ps-pos .user-chip .user-name {
+  color: var(--ps-text);
+  font-weight: 700;
+}
+
+html[data-theme] body.ps-pos .user-chip .user-branch {
+  color: var(--ps-muted);
+  font-size: 12px;
+}
+
+html[data-theme] body.ps-pos .user-chip .ps-avatar {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  align-self: center;
+  line-height: 1;
+}
+
+html[data-theme] body.ps-pos {
+  background: var(--ps-bg);
+  color: var(--ps-text);
+}
+
+html[data-theme] body.ps-pos .top,
+html[data-theme] body.ps-pos .nav,
+html[data-theme] body.ps-pos .order {
+  background: var(--ps-bg-elev);
+  border-color: var(--ps-line);
+}
+
+html[data-theme] body.ps-pos .search,
+html[data-theme] body.ps-pos input.field,
+html[data-theme] body.ps-pos .pcard,
+html[data-theme] body.ps-pos .sheet,
+html[data-theme] body.ps-pos .step button,
+html[data-theme] body.ps-pos .btn-gray {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-pos .step button {
+  color: var(--ps-yellow);
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 18px;
+  font-size: 20px;
+}
+
+html[data-theme] body.ps-pos .pname {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+html[data-theme] body.ps-pos .pstock,
+html[data-theme] body.ps-pos .hint {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+html[data-theme] body.ps-pos .kicker {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+html[data-theme] body.ps-pos input,
+html[data-theme] body.ps-pos select,
+html[data-theme] body.ps-pos textarea {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+html[data-theme] body.ps-pos .search {
+  font-size: 17px;
+}
+
+html[data-theme] body.ps-pos button,
+html[data-theme] body.ps-pos .btn {
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+html[data-theme] body.ps-pos .nav a,
+html[data-theme] body.ps-pos .nav button {
+  font-size: 12px;
+}
+
+html[data-theme] body.ps-pos .step button {
+  font-size: 20px;
+}
+
+html[data-theme] body.ps-pos .fab {
+  font-size: 22px;
+}
+
+html[data-theme="light"] body.ps-pos .cat.on {
+  outline-color: #14171c;
+}
+
+html[data-theme] body.ps-pos .btn-yellow {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+html[data-theme] body.ps-pos .btn-blue {
+  background: var(--ps-blue);
+  color: #fff;
+}
+
+html[data-theme] body.ps-pos .ps-theme-switch {
+  flex: 0 0 auto;
+}
+
+html[data-theme] body.ps-pos .cust-badge {
+  min-width: 46px;
+  height: 46px;
+  padding: 0 8px;
+  border-radius: 14px;
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+html[data-theme] body.ps-pos .order-cust {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+html[data-theme] body.ps-pos .order-cust-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+html[data-theme] body.ps-pos .order-cust-field {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+html[data-theme] body.ps-pos .order-cust-row .field {
+  margin-top: 0;
+}
+
+.ps-mark-lg {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  margin: 0 auto 8px;
+  font-size: 18px;
+}
+
+html[data-theme] body.ps-app button:hover,
+html[data-theme] body.ps-app input[type="submit"]:hover,
+html[data-theme] body.ps-app input[type="button"]:hover,
+html[data-theme] body.ps-app a.back-button:hover,
+html[data-theme] body.ps-app a.template-button:hover {
+  filter: brightness(1.06);
+}
+
+html[data-theme] body.ps-app input:focus,
+html[data-theme] body.ps-app select:focus,
+html[data-theme] body.ps-app textarea:focus {
+  outline: 2px solid var(--ps-yellow);
+  border-color: var(--ps-yellow);
+}
+
+html[data-theme] body.ps-app a.back-button,
+html[data-theme] body.ps-app a.template-button,
+html[data-theme] body.ps-app a.print-button,
+html[data-theme] body.ps-app a.new-order-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 12px;
+  min-height: 42px;
+  padding: 8px 16px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 var(--ps-gap) var(--ps-gap) 0;
+}
+
+html[data-theme] body.ps-app a.back-button {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-app a.template-button,
+html[data-theme] body.ps-app a.print-button,
+html[data-theme] body.ps-app a.new-order-button {
+  background: var(--ps-blue);
+  color: #fff;
+  border: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > button,
+html[data-theme] body.ps-app .content > button,
+html[data-theme] body.ps-app .container > button {
+  margin: 0 var(--ps-gap) var(--ps-gap) 0;
+}
+
+html[data-theme] body.ps-app .button-container button,
+html[data-theme] body.ps-app .buttons button {
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .button-container,
+html[data-theme] body.ps-app .buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ps-gap);
+  align-items: center;
+  margin: 0 0 var(--ps-gap);
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .search-container form > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .filter-form:not(:has(> label)) > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .search-form > input:not([type="hidden"]):not([type="submit"]):not([type="button"]),
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > div,
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > div,
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > div,
+html[data-theme] body.ps-app .search-form > div {
+  width: auto;
+  min-width: min(160px, 100%);
+  max-width: 100%;
+  flex: 1 1 180px;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > select,
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > select,
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > select,
+html[data-theme] body.ps-app .search-container form > select,
+html[data-theme] body.ps-app .filter-form:not(:has(> label)) > select,
+html[data-theme] body.ps-app .search-form > select {
+  width: auto;
+  min-width: min(180px, 100%);
+  max-width: 100%;
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > button,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > input[type="submit"],
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > button,
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > input[type="submit"],
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > button,
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > input[type="submit"],
+html[data-theme] body.ps-app .search-container form > button,
+html[data-theme] body.ps-app .filter-form:not(:has(> label)) > button,
+html[data-theme] body.ps-app .search-form > button {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .search-form > div input,
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > div input,
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > div input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app option {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  padding: 8px 16px;
+  line-height: 1.4;
+}
+
+html[data-theme] body.ps-app .content img,
+html[data-theme] body.ps-app .ps-content img,
+html[data-theme] body.ps-app .container img {
+  max-width: 100%;
+  height: auto;
+}
+
+html[data-theme] body.ps-app marquee {
+  display: none;
+}
+
+html[data-theme] body.ps-app canvas {
+  background: #fff;
+  border-radius: 16px;
+  max-width: 100%;
+}
+
+html[data-theme] body.ps-app .category-button {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  margin: 0 var(--ps-gap) var(--ps-gap) 0;
+}
+
+html[data-theme] body.ps-app .ps-dash-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 18px;
+  padding: 14px 16px;
+  box-shadow: var(--ps-shadow);
+  margin: 0 0 16px;
+}
+
+html[data-theme] body.ps-app .ps-dash-logo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid var(--ps-line);
+  border-radius: 14px;
+  padding: 8px;
+  max-width: min(420px, 100%);
+}
+
+html[data-theme] body.ps-app .ps-dash-logo-img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-height: 88px;
+  max-width: min(280px, 100%);
+  object-fit: contain;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+html[data-theme] body.ps-app .ps-dash-copy {
+  min-width: 0;
+}
+
+html[data-theme] body.ps-app .ps-dash-copy h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+html[data-theme] body.ps-app .ps-dash-branch {
+  display: inline-flex;
+  align-items: center;
+  margin: 8px 0 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  border: 1px solid var(--ps-line);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  html[data-theme] body.ps-app .ps-dash-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  html[data-theme] body.ps-app .ps-dash-logo {
+    max-width: 100%;
+  }
+}
+
+.ps-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0 0 8px;
+}
+
+.ps-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 108px;
+  border-radius: 16px;
+  padding: 14px 16px;
+  text-decoration: none;
+  color: #fff !important;
+  font-weight: 800;
+  box-shadow: var(--ps-shadow);
+}
+
+.ps-tile span {
+  color: rgba(255, 255, 255, 0.82);
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ps-tile:hover { filter: brightness(1.06); }
+
+html[data-theme] body.ps-app .card,
+html[data-theme] body.ps-app .form-control,
+html[data-theme] body.ps-app .list-group-item {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border-color: var(--ps-line);
+}
+
+@media (max-width: 900px) {
+  .ps-search { display: none; }
+}
+
+/* One label/control pair per row when the page column is under about 800px. */
+@container ps-page (max-width: 800px) {
+  html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label),
+  html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label),
+  html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label),
+  html[data-theme] body.ps-app .filter-form:has(> label) {
+    grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+  }
+}
+
+/* Custom listbox. The span takes the select's grid/flex slot; the native control stays in the form. */
+html[data-theme] body.ps-app .ps-select {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+  width: auto;
+  min-width: min(180px, 100%);
+  max-width: 100%;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):has(> label) > .ps-select,
+html[data-theme] body.ps-app .content > form:not(:has(table)):has(> label) > .ps-select,
+html[data-theme] body.ps-app .container > form:not(:has(table)):has(> label) > .ps-select,
+html[data-theme] body.ps-app .filter-form:has(> label) > .ps-select,
+html[data-theme] body.ps-app .modal .ps-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-content > form:not(:has(table)):not(:has(> label)) > .ps-select,
+html[data-theme] body.ps-app .content > form:not(:has(table)):not(:has(> label)) > .ps-select,
+html[data-theme] body.ps-app .container > form:not(:has(table)):not(:has(> label)) > .ps-select,
+html[data-theme] body.ps-app .search-container form > .ps-select,
+html[data-theme] body.ps-app .filter-form:not(:has(> label)) > .ps-select,
+html[data-theme] body.ps-app .search-form > .ps-select {
+  width: auto;
+  min-width: min(180px, 100%);
+  max-width: 100%;
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app td .ps-select,
+html[data-theme] body.ps-app td form > .ps-select {
+  width: 100%;
+  min-width: 180px;
+  max-width: none;
+  flex: 1 1 180px;
+}
+
+html[data-theme] body.ps-app select.ps-select-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+html[data-theme] body.ps-app .ps-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  height: auto;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--ps-input);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 8px;
+  box-shadow: none;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+
+html[data-theme] body.ps-app .ps-select-trigger:hover,
+html[data-theme] body.ps-app .ps-select-option:hover {
+  filter: none;
+}
+
+html[data-theme] body.ps-app .ps-select-trigger:hover {
+  background: var(--ps-input);
+  border-color: var(--ps-line);
+}
+
+html[data-theme] body.ps-app .ps-select-trigger:focus,
+html[data-theme] body.ps-app .ps-select-trigger:focus-visible,
+html[data-theme] body.ps-app .ps-select.is-open .ps-select-trigger {
+  outline: 2px solid var(--ps-yellow);
+  outline-offset: 1px;
+  border-color: var(--ps-yellow);
+}
+
+html[data-theme] body.ps-app .ps-select-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+html[data-theme] body.ps-app .ps-select-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+
+html[data-theme] body.ps-app .ps-select-trigger.is-placeholder {
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-select-chevron {
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-select-chevron svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+html[data-theme] body.ps-app .ps-select-panel {
+  position: fixed;
+  z-index: 10050;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px;
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 8px;
+  box-shadow: var(--ps-shadow);
+  max-height: 240px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+html[data-theme] body.ps-app .ps-select-panel[hidden] {
+  display: none;
+}
+
+html[data-theme] body.ps-app .ps-select-group {
+  padding: 8px 10px 4px;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--ps-text);
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  overflow: visible;
+  cursor: pointer;
+}
+
+html[data-theme] body.ps-app .ps-select-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+
+html[data-theme] body.ps-app .ps-select-option:hover,
+html[data-theme] body.ps-app .ps-select-option.is-active {
+  background: var(--ps-row);
+  color: var(--ps-text);
+  filter: none;
+}
+
+html[data-theme] body.ps-app .ps-select-option.is-selected {
+  font-weight: 600;
+}
+
+html[data-theme] body.ps-app .ps-select-check {
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--ps-text);
+  opacity: 0;
+}
+
+html[data-theme] body.ps-app .ps-select-option.is-selected .ps-select-check {
+  opacity: 1;
+}
+
+html[data-theme] body.ps-app .ps-select-check svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+html[data-theme] body.ps-app .ps-select-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+  filter: none;
+}
+
+/* =============================================================================
+   Shadcn-like components (PHP/CSS) - mapped to PocketSolutions theme tokens
+   ============================================================================= */
+
+html[data-theme] body.ps-app .ps-page-lead,
+html[data-theme] body.ps-app .hint,
+html[data-theme] body.ps-app .ps-muted,
+html[data-theme] body.ps-app .muted,
+html[data-theme] body.ps-app .ro {
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+html[data-theme] body.ps-app .ps-page-lead,
+html[data-theme] body.ps-app .hint {
+  margin: 0 0 var(--ps-stack-gap);
+  max-width: 72ch;
+}
+
+html[data-theme] body.ps-app .ps-helper {
+  display: block;
+  margin-top: 0.375rem;
+  color: var(--ps-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* --- Card --- */
+html[data-theme] body.ps-app .ps-card,
+html[data-theme] body.ps-app .ps-panel {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 0.75rem;
+  box-shadow: none;
+  margin: 0 0 var(--ps-stack-gap);
+  overflow: hidden;
+}
+
+html[data-theme] body.ps-app .ps-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ps-space-1);
+  padding: var(--ps-space-5) var(--ps-space-5) 0;
+}
+
+html[data-theme] body.ps-app .ps-card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  color: var(--ps-text);
+}
+
+html[data-theme] body.ps-app .ps-card-desc {
+  margin: 0;
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+html[data-theme] body.ps-app .ps-card-content,
+html[data-theme] body.ps-app .ps-panel > .ps-card-content {
+  padding: var(--ps-space-5);
+}
+
+html[data-theme] body.ps-app .ps-card-header + .ps-card-content {
+  padding-top: var(--ps-space-4);
+}
+
+html[data-theme] body.ps-app .ps-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ps-space-2);
+  padding: 0 var(--ps-space-5) var(--ps-space-5);
+}
+
+html[data-theme] body.ps-app .ps-panel {
+  padding: 0;
+}
+
+html[data-theme] body.ps-app .ps-panel > h2,
+html[data-theme] body.ps-app .ps-panel > h3 {
+  margin: 0;
+  padding: 1.25rem 1.25rem 0;
+  font-size: 1rem;
+}
+
+/* Nested forms inside cards: no second card chrome */
+html[data-theme] body.ps-app .ps-card > form:not(:has(table)),
+html[data-theme] body.ps-app .ps-card-content > form:not(:has(table)),
+html[data-theme] body.ps-app .ps-panel > form:not(:has(table)),
+html[data-theme] body.ps-app .ps-form-stack {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  display: block;
+  max-width: none;
+  gap: 0;
+  align-items: stretch;
+}
+
+/* Filter / inline bars inside cards must stay a flex row (override display:block above) */
+html[data-theme] body.ps-app .ps-card > form.ps-form-inline:not(:has(table)),
+html[data-theme] body.ps-app .ps-card-content > form.ps-form-inline:not(:has(table)),
+html[data-theme] body.ps-app .ps-card > form.filter-form:not(:has(table)):not(:has(> label)),
+html[data-theme] body.ps-app .ps-card-content > form.filter-form:not(:has(table)):not(:has(> label)),
+html[data-theme] body.ps-app .ps-panel > form.ps-form-inline:not(:has(table)),
+html[data-theme] body.ps-app .ps-panel > form.filter-form:not(:has(table)):not(:has(> label)) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ps-control-gap);
+}
+
+/* --- Button --- */
+html[data-theme] body.ps-app .ps-btn,
+html[data-theme] body.ps-app a.ps-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+html[data-theme] body.ps-app .ps-btn:focus-visible,
+html[data-theme] body.ps-app .ps-input:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack input:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack select:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack textarea:focus-visible {
+  outline: 2px solid var(--ps-blue);
+  outline-offset: 2px;
+}
+
+html[data-theme] body.ps-app .ps-btn:disabled,
+html[data-theme] body.ps-app .ps-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+html[data-theme] body.ps-app .ps-btn-sm {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0 0.75rem;
+  font-size: 0.8125rem;
+}
+
+html[data-theme] body.ps-app .ps-btn-default {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  border-color: transparent;
+}
+
+html[data-theme] body.ps-app .ps-btn-default:hover {
+  filter: brightness(1.05);
+}
+
+html[data-theme] body.ps-app .ps-btn-secondary {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  border-color: var(--ps-line);
+}
+
+html[data-theme] body.ps-app .ps-btn-secondary:hover {
+  background: var(--ps-row);
+}
+
+/* a.ps-btn is more specific than .ps-btn-outline; restate border so outline links paint */
+html[data-theme] body.ps-app .ps-btn-outline,
+html[data-theme] body.ps-app a.ps-btn-outline,
+html[data-theme] body.ps-app .ps-btn.ps-btn-outline {
+  background: transparent;
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-app .ps-btn-outline:hover,
+html[data-theme] body.ps-app a.ps-btn-outline:hover,
+html[data-theme] body.ps-app .ps-btn.ps-btn-outline:hover {
+  background: var(--ps-card-2);
+}
+
+html[data-theme] body.ps-app .ps-btn-destructive,
+html[data-theme] body.ps-app button.reject.ps-btn,
+html[data-theme] body.ps-app .ps-btn.reject {
+  background: var(--ps-danger);
+  color: #fff;
+  border-color: transparent;
+}
+
+html[data-theme] body.ps-app .ps-btn-destructive:hover {
+  filter: brightness(1.05);
+}
+
+html[data-theme] body.ps-app .ps-btn-ghost {
+  background: transparent;
+  color: var(--ps-text);
+  border-color: transparent;
+}
+
+html[data-theme] body.ps-app .ps-btn-ghost:hover {
+  background: var(--ps-card-2);
+}
+
+html[data-theme] body.ps-app .ps-btn-primary {
+  background: var(--ps-blue);
+  color: #fff;
+  border-color: transparent;
+}
+
+html[data-theme] body.ps-app button.process.ps-btn,
+html[data-theme] body.ps-app .ps-btn.process {
+  background: var(--ps-blue);
+  color: #fff;
+}
+
+/* --- Label + Input --- */
+html[data-theme] body.ps-app .ps-label,
+html[data-theme] body.ps-app .ps-form-stack > label:not(.ps-confirm-row) {
+  display: block;
+  margin: 0 0 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ps-text);
+  line-height: 1.25;
+}
+
+html[data-theme] body.ps-app .ps-form-stack > label + input,
+html[data-theme] body.ps-app .ps-form-stack > label + select,
+html[data-theme] body.ps-app .ps-form-stack > label + textarea {
+  margin-bottom: var(--ps-space-3);
+}
+
+html[data-theme] body.ps-app .ps-input,
+html[data-theme] body.ps-app .ps-form-stack input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+html[data-theme] body.ps-app .ps-form-stack select,
+html[data-theme] body.ps-app .ps-form-stack textarea {
+  display: flex;
+  width: 100%;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  box-sizing: border-box;
+  border-radius: 0.5rem;
+  border: 1px solid var(--ps-line);
+  background: var(--ps-input);
+  color: var(--ps-text);
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+html[data-theme] body.ps-app .ps-form-stack textarea,
+html[data-theme] body.ps-app textarea.ps-input {
+  height: auto;
+  min-height: 5rem;
+  padding: 0.625rem 0.75rem;
+  resize: vertical;
+}
+
+html[data-theme] body.ps-app .ps-input.ps-ro,
+html[data-theme] body.ps-app input.ps-ro,
+html[data-theme] body.ps-app .ps-form-stack .ps-ro {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-field {
+  margin: 0 0 var(--ps-space-3);
+}
+
+html[data-theme] body.ps-app .ps-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ps-control-gap);
+  align-items: center;
+  margin-top: var(--ps-space-4);
+}
+
+html[data-theme] body.ps-app .ps-confirm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin: 0.875rem 0;
+  font-size: 0.875rem;
+  color: var(--ps-text);
+  font-weight: 500;
+}
+
+html[data-theme] body.ps-app .ps-confirm-row input {
+  width: auto;
+  height: auto;
+  min-height: 0;
+  margin-top: 0.2rem;
+}
+
+/* --- Alert --- */
+html[data-theme] body.ps-app .ps-alert {
+  position: relative;
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--ps-line);
+  padding: var(--ps-space-3) var(--ps-space-4);
+  margin: 0 0 var(--ps-stack-gap);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  background: var(--ps-card);
+  color: var(--ps-text);
+  box-sizing: border-box;
+}
+
+html[data-theme] body.ps-app .ps-alert-title {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+html[data-theme] body.ps-app .ps-alert-destructive,
+html[data-theme] body.ps-app .ps-alert-warn,
+html[data-theme] body.ps-app .error:not(:empty) {
+  background: rgba(240, 113, 120, 0.1);
+  border-color: rgba(240, 113, 120, 0.35);
+  color: var(--ps-danger);
+}
+
+html[data-theme] body.ps-app .ps-alert-success,
+html[data-theme] body.ps-app .success:not(:empty) {
+  background: rgba(47, 206, 116, 0.1);
+  border-color: rgba(47, 206, 116, 0.35);
+  color: var(--ps-green);
+}
+
+html[data-theme] body.ps-app .ps-alert-info,
+html[data-theme] body.ps-app .ps-alert-default {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line);
+  color: var(--ps-text);
+}
+
+/* --- Badge --- */
+html[data-theme] body.ps-app .ps-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.125rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+html[data-theme] body.ps-app .ps-badge-default {
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  border-color: var(--ps-line);
+}
+
+html[data-theme] body.ps-app .ps-badge-secondary {
+  background: var(--ps-row);
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-badge-success,
+html[data-theme] body.ps-app .ps-badge-BALANCED,
+html[data-theme] body.ps-app .ps-badge-PROCESSED {
+  background: rgba(47, 206, 116, 0.15);
+  color: var(--ps-green);
+}
+
+html[data-theme] body.ps-app .ps-badge-destructive,
+html[data-theme] body.ps-app .ps-badge-SHORTAGE,
+html[data-theme] body.ps-app .ps-badge-REJECTED {
+  background: rgba(240, 113, 120, 0.15);
+  color: var(--ps-danger);
+}
+
+html[data-theme] body.ps-app .ps-badge-warning,
+html[data-theme] body.ps-app .ps-badge-SURPLUS,
+html[data-theme] body.ps-app .ps-badge-REQUESTED {
+  background: rgba(245, 180, 0, 0.18);
+  color: #d4a017;
+}
+
+html[data-theme] body.ps-app .ps-badge-info,
+html[data-theme] body.ps-app .ps-badge-APPROVED {
+  background: rgba(47, 111, 237, 0.15);
+  color: var(--ps-blue);
+}
+
+html[data-theme] body.ps-app .ps-status-BALANCED,
+html[data-theme] body.ps-app .status-PROCESSED { color: var(--ps-green); font-weight: 700; }
+html[data-theme] body.ps-app .ps-status-SHORTAGE,
+html[data-theme] body.ps-app .status-REJECTED { color: var(--ps-danger); font-weight: 700; }
+html[data-theme] body.ps-app .ps-status-SURPLUS,
+html[data-theme] body.ps-app .status-REQUESTED { color: #d4a017; font-weight: 700; }
+html[data-theme] body.ps-app .status-APPROVED { color: var(--ps-blue); font-weight: 700; }
+
+/* --- Table --- */
+html[data-theme] body.ps-app .ps-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin: 0 0 var(--ps-stack-gap);
+  border: 1px solid var(--ps-line);
+  border-radius: 0.75rem;
+  background: var(--ps-card);
+}
+
+html[data-theme] body.ps-app .ps-table-wrap table,
+html[data-theme] body.ps-app table.ps-table {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+html[data-theme] body.ps-app .ps-table-wrap th,
+html[data-theme] body.ps-app table.ps-table th {
+  background: transparent;
+  color: var(--ps-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  height: 2.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--ps-line);
+}
+
+html[data-theme] body.ps-app .ps-table-wrap td,
+html[data-theme] body.ps-app table.ps-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--ps-line);
+  font-size: 0.875rem;
+  vertical-align: middle;
+}
+
+html[data-theme] body.ps-app .ps-table-wrap tr:last-child td,
+html[data-theme] body.ps-app table.ps-table tr:last-child td {
+  border-bottom: 0;
+}
+
+/* --- Layout helpers --- */
+html[data-theme] body.ps-app .ps-section { margin: 0 0 var(--ps-space-6); }
+html[data-theme] body.ps-app .ps-section > h2 { margin: 0 0 var(--ps-space-3); font-size: 1.125rem; }
+
+html[data-theme] body.ps-app .ps-link-row,
+html[data-theme] body.ps-app .ps-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ps-control-gap);
+  margin: 0 0 var(--ps-stack-gap);
+}
+
+html[data-theme] body.ps-app .ps-link-row a:not(.ps-btn) {
+  display: inline-flex;
+  align-items: center;
+  height: 2.25rem;
+  padding: 0 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--ps-line);
+  background: transparent;
+  color: var(--ps-text);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+html[data-theme] body.ps-app .ps-link-row a:not(.ps-btn):hover {
+  background: var(--ps-card-2);
+}
+
+html[data-theme] body.ps-app .ps-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+html[data-theme] body.ps-app .ps-kpi {
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 0.75rem;
+  padding: 1rem 1.125rem;
+  min-width: 0;
+}
+
+html[data-theme] body.ps-app .ps-kpi-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ps-muted);
+}
+
+html[data-theme] body.ps-app .ps-kpi-value {
+  font-size: 1.375rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-top: 0.35rem;
+  color: var(--ps-text);
+  word-break: break-word;
+}
+
+html[data-theme] body.ps-app .ps-kpi-sub {
+  font-size: 0.75rem;
+  color: var(--ps-muted);
+  margin-top: 0.35rem;
+  line-height: 1.4;
+}
+
+html[data-theme] body.ps-app .ps-kpi-sub.delta-up,
+html[data-theme] body.ps-app .delta-up { color: var(--ps-green); }
+html[data-theme] body.ps-app .ps-kpi-sub.delta-down,
+html[data-theme] body.ps-app .delta-down { color: var(--ps-danger); }
+
+html[data-theme] body.ps-app .ps-empty {
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+  padding: var(--ps-space-5);
+  border: 1px dashed var(--ps-line);
+  border-radius: 0.75rem;
+  background: var(--ps-card-2);
+  margin: 0 0 var(--ps-stack-gap);
+}
+
+html[data-theme] body.ps-app .ps-empty > p {
+  margin: 0;
+}
+
+html[data-theme] body.ps-app .ps-meta {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--ps-text);
+  margin: 0 0 0.75rem;
+}
+
+html[data-theme] body.ps-app .ps-balance {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0.5rem 0 1rem;
+  color: var(--ps-text);
+}
+
+/* 2026-10-18: the right-hand card fills the rest of the page (was capped at 1100px).
+   minmax(0, 1fr) lets a wide table scroll inside its card instead of stretching the page. */
+html[data-theme] body.ps-app .ps-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 960px) {
+  html[data-theme] body.ps-app .ps-split {
+    grid-template-columns: minmax(280px, 400px) minmax(0, 1fr);
+  }
+}
+
+html[data-theme] body.ps-app .ps-narrow { max-width: 28rem; }
+html[data-theme] body.ps-app .ps-display-total { font-weight: 700; margin: 0.75rem 0; }
+
+html[data-theme] body.ps-app .nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin: 0 0 1rem;
+}
+
+html[data-theme] body.ps-app button.reject:not(.ps-btn) {
+  background: var(--ps-danger);
+  color: #fff;
+}
+
+html[data-theme] body.ps-app button.process:not(.ps-btn) {
+  background: var(--ps-blue);
+  color: #fff;
+}
+
+/* --- Button sizes (Shadcn: default / sm / lg) --- */
+html[data-theme] body.ps-app .ps-btn-lg {
+  height: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0 1.25rem;
+  font-size: 0.9375rem;
+}
+
+html[data-theme] body.ps-app .ps-btn-icon {
+  width: 2.5rem;
+  padding: 0;
+}
+
+html[data-theme] body.ps-app .ps-btn-sm.ps-btn-icon {
+  width: 2.25rem;
+}
+
+/* Forms nested in cards: no second chrome (replaces inline style resets) */
+html[data-theme] body.ps-app .ps-card .filter-form,
+html[data-theme] body.ps-app .ps-card-content .filter-form,
+html[data-theme] body.ps-app .ps-form-inline {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none;
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ps-control-gap) !important;
+}
+
+html[data-theme] body.ps-app .ps-card .filter-form:has(> label),
+html[data-theme] body.ps-app .ps-card-content .filter-form:has(> label),
+html[data-theme] body.ps-app .ps-form-inline:has(> label) {
+  display: grid !important;
+  grid-template-columns: minmax(100px, 140px) minmax(0, 1fr);
+  gap: var(--ps-space-2) var(--ps-space-3) !important;
+  align-items: center;
+}
+
+/* Labeled inline forms: actions span full width. Unlabeled filter bars keep buttons in-row. */
+html[data-theme] body.ps-app .ps-card .filter-form:has(> label) > .ps-btn,
+html[data-theme] body.ps-app .ps-card .filter-form:has(> label) > button,
+html[data-theme] body.ps-app .ps-card .filter-form:has(> label) > a.ps-btn,
+html[data-theme] body.ps-app .ps-form-inline:has(> label) > .ps-btn,
+html[data-theme] body.ps-app .ps-form-inline:has(> label) > button,
+html[data-theme] body.ps-app .ps-form-inline:has(> label) > a.ps-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+  width: auto;
+}
+
+html[data-theme] body.ps-app .ps-form-inline:not(:has(> label)) > input.ps-input,
+html[data-theme] body.ps-app .ps-form-inline:not(:has(> label)) > select.ps-input,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > input.ps-input,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > select.ps-input,
+html[data-theme] body.ps-app .ps-form-inline:not(:has(> label)) > .ps-select,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > .ps-select {
+  width: auto !important;
+  min-width: 10rem;
+  max-width: 22rem !important;
+  flex: 1 1 12rem !important;
+}
+
+html[data-theme] body.ps-app .ps-form-inline:not(:has(> label)) > .ps-btn,
+html[data-theme] body.ps-app .ps-form-inline:not(:has(> label)) > a.ps-btn,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > .ps-btn,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > a.ps-btn,
+html[data-theme] body.ps-app .ps-card .filter-form:not(:has(> label)) > button {
+  flex: 0 0 auto;
+}
+
+/* Compact KPIs (till cash breakdown) */
+html[data-theme] body.ps-app .ps-kpi-grid.ps-kpi-compact {
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+}
+
+html[data-theme] body.ps-app .ps-kpi-compact .ps-kpi {
+  padding: 0.75rem 0.875rem;
+}
+
+html[data-theme] body.ps-app .ps-kpi-compact .ps-kpi-value {
+  font-size: 1rem;
+}
+
+/* Card content flush to edges (tables that fill the card) */
+html[data-theme] body.ps-app .ps-card-content.ps-card-flush {
+  padding: 0;
+}
+
+html[data-theme] body.ps-app .ps-card-content.ps-card-flush .ps-table-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+html[data-theme] body.ps-app .ps-card-header + .ps-card-content.ps-card-flush {
+  border-top: 1px solid var(--ps-line);
+}
+
+/* Small input (table cells / compact filters) */
+html[data-theme] body.ps-app .ps-input-sm,
+html[data-theme] body.ps-app input.ps-input.ps-input-sm,
+html[data-theme] body.ps-app .ps-table .ps-input.qty-input {
+  height: 2.25rem;
+  min-height: 2.25rem;
+  min-width: 5rem;
+  padding: 0 0.5rem;
+  font-size: 0.8125rem;
+  border-radius: 0.375rem;
+}
+
+html[data-theme] body.ps-app select.ps-input {
+  display: flex;
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+html[data-theme] body.ps-app .ps-split-gap {
+  margin-top: var(--ps-stack-gap);
+}
+
+/* Empty / muted messages in the page stack */
+html[data-theme] body.ps-app .ps-content > .ps-muted,
+html[data-theme] body.ps-app .ps-content > p.ps-muted {
+  margin: 0;
+  color: var(--ps-muted);
+}
+
+/* Stacked edit forms in table cells (override td form inline-flex nowrap) */
+html[data-theme] body.ps-app .ps-content td form.ps-form-stack.ps-rate-edit,
+html[data-theme] body.ps-app td form.ps-form-stack.ps-rate-edit,
+html[data-theme] body.ps-app form.ps-form-stack.ps-rate-edit {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: min(16rem, 100%);
+  max-width: 20rem;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 0.5rem 0;
+  margin: 0;
+}
+
+html[data-theme] body.ps-app form.ps-form-stack.ps-rate-edit .ps-field {
+  margin: 0;
+}
+
+html[data-theme] body.ps-app form.ps-form-stack.ps-rate-edit .ps-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+}
+
+html[data-theme] body.ps-app form.ps-form-stack.ps-rate-edit .ps-confirm-row {
+  margin: 0.25rem 0 0;
+}
+
+html[data-theme] body.ps-app form.ps-form-stack.ps-rate-edit .ps-form-actions {
+  margin-top: 0.35rem;
+}
+
+html[data-theme] body.ps-app .ps-list {
+  margin: 0;
+  padding-left: 1.2em;
+  max-width: none;
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+html[data-theme] body.ps-app .ps-list li {
+  color: var(--ps-muted);
+  font-size: 0.875rem;
+}
+
+/* Empty-state / alert CTA rows */
+html[data-theme] body.ps-app .ps-empty .ps-link-row,
+html[data-theme] body.ps-app .ps-alert .ps-link-row {
+  margin: var(--ps-space-3) 0 0;
+  display: flex;
+}
+
+/* Nested link rows inside card content: no page-level bottom margin */
+html[data-theme] body.ps-app .ps-card-content > .ps-link-row,
+html[data-theme] body.ps-app .ps-card-content > .ps-form-stack {
+  margin-bottom: 0;
+}
+
+/* Align logout dialog buttons with .ps-btn geometry (keep existing class names) */
+html[data-theme] body.ps-app .ps-logout-btn.ps-btn {
+  width: 100%;
+}
+
+@media (min-width: 400px) {
+  html[data-theme] body.ps-app .ps-logout-btn.ps-btn {
+    width: auto;
+    min-width: 5.5rem;
+  }
+}
+
+/* --- Row action menu (Shadcn-like) --- */
+html[data-theme] body.ps-app .ps-action-menu {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 11rem;
+  padding: 0.35rem;
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel[hidden] {
+  display: none !important;
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel a,
+html[data-theme] body.ps-app .ps-action-menu-panel button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--ps-text);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel a:hover,
+html[data-theme] body.ps-app .ps-action-menu-panel button:hover {
+  background: var(--ps-card-2);
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel button.is-danger {
+  color: #ef4444;
+}
+
+html[data-theme] body.ps-app .ps-action-menu-panel form {
+  margin: 0;
+  padding: 0;
+  display: block;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+html[data-theme] body.ps-app .ps-table-wrap td.col-actions,
+html[data-theme] body.ps-app table.ps-table td.col-actions {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+html[data-theme] body.ps-app .ps-table-wrap td .ps-cell-clip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* 2026-10-14: shared modal dialog (native <dialog>), header row, table helpers */
+html[data-theme] body.ps-app .ps-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 1.25rem 1.25rem 1rem;
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 16px;
+  box-shadow: var(--ps-shadow);
+}
+html[data-theme] body.ps-app .ps-dialog::backdrop {
+  background: var(--ps-overlay);
+}
+html[data-theme] body.ps-app .ps-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+html[data-theme] body.ps-app .ps-dialog-title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+}
+html[data-theme] body.ps-app .ps-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+@media (max-width: 560px) {
+  html[data-theme] body.ps-app .ps-dialog-grid { grid-template-columns: 1fr; }
+}
+html[data-theme] body.ps-app .ps-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--ps-line);
+}
+html[data-theme] body.ps-app .ps-dialog .ps-input[readonly] {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-app .ps-field-hint {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-app .ps-card-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+html[data-theme] body.ps-app .ps-table th.num,
+html[data-theme] body.ps-app .ps-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme] body.ps-app .ps-table th.act,
+html[data-theme] body.ps-app .ps-table td.act {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+html[data-theme] body.ps-app .ps-table td.nowrap {
+  white-space: nowrap;
+}
+.ps-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+html[data-theme] body.ps-app .ps-dialog { overflow-x: hidden; box-sizing: border-box; }
+html[data-theme] body.ps-app .ps-dialog .ps-field { min-width: 0; }
+html[data-theme] body.ps-app .ps-dialog .ps-input,
+html[data-theme] body.ps-app .ps-dialog select.ps-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+html[data-theme] body.ps-app .ps-dialog .ps-select { display: flex; width: 100%; }
+html[data-theme] body.ps-app .ps-dialog .ps-select-trigger { width: 100%; }
+
+/* ==========================================================================
+   2026-10-14 — Shared page components (replaces the per-page <style> blocks).
+   Legacy class names are kept in the markup and styled here once, with tokens.
+   ========================================================================== */
+html[data-theme="dark"] { --ps-warn: #f5b400; --ps-mono: ui-monospace, Consolas, "Cascadia Mono", monospace; }
+html[data-theme="light"] { --ps-warn: #9a6b00; --ps-mono: ui-monospace, Consolas, "Cascadia Mono", monospace; }
+
+html[data-theme] body.ps-app .error,
+html[data-theme] body.ps-app .err,
+html[data-theme] body.ps-app .cm-err {
+  color: var(--ps-danger);
+  font-weight: 600;
+  margin: 0 0 var(--ps-space-3);
+}
+html[data-theme] body.ps-app .notice,
+html[data-theme] body.ps-app .ok,
+html[data-theme] body.ps-app .success,
+html[data-theme] body.ps-app .cm-ok {
+  color: var(--ps-green);
+  font-weight: 600;
+  margin: 0 0 var(--ps-space-3);
+}
+html[data-theme] body.ps-app .hint,
+html[data-theme] body.ps-app .audit-note,
+html[data-theme] body.ps-app .scope-note,
+html[data-theme] body.ps-app .limitations,
+html[data-theme] body.ps-app .lead,
+html[data-theme] body.ps-app .p95-note,
+html[data-theme] body.ps-app .cm-hint,
+html[data-theme] body.ps-app .empty {
+  color: var(--ps-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0 0 var(--ps-space-3);
+}
+html[data-theme] body.ps-app .mono,
+html[data-theme] body.ps-app .readonly-code,
+html[data-theme] body.ps-app .labels .label .code {
+  font-family: var(--ps-mono);
+  font-weight: 600;
+}
+html[data-theme] body.ps-app .num,
+html[data-theme] body.ps-app th.num,
+html[data-theme] body.ps-app td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme] body.ps-app tfoot td { font-weight: 700; }
+html[data-theme] body.ps-app .total,
+html[data-theme] body.ps-app .totals,
+html[data-theme] body.ps-app .cm-bal { font-weight: 700; font-variant-numeric: tabular-nums; }
+html[data-theme] body.ps-app .cm-bal { font-size: 18px; margin: 8px 0 12px; }
+
+html[data-theme] body.ps-app .status-active,
+html[data-theme] body.ps-app .status-posted,
+html[data-theme] body.ps-app .BALANCED,
+html[data-theme] body.ps-app .cm-dir-in { color: var(--ps-green); font-weight: 600; }
+html[data-theme] body.ps-app .status-suspended,
+html[data-theme] body.ps-app .SURPLUS,
+html[data-theme] body.ps-app .low,
+html[data-theme] body.ps-app .sev-INCONCLUSIVE { color: var(--ps-warn); font-weight: 600; }
+html[data-theme] body.ps-app .status-closed,
+html[data-theme] body.ps-app .status-voided,
+html[data-theme] body.ps-app .status-inactive { color: var(--ps-muted); font-weight: 600; }
+html[data-theme] body.ps-app .SHORTAGE,
+html[data-theme] body.ps-app .out,
+html[data-theme] body.ps-app .stale,
+html[data-theme] body.ps-app .sev-DISCREPANCY,
+html[data-theme] body.ps-app .cm-dir-out { color: var(--ps-danger); font-weight: 600; }
+
+html[data-theme] body.ps-app .audit-filters,
+html[data-theme] body.ps-app .filters,
+html[data-theme] body.ps-app .stmt-toolbar,
+html[data-theme] body.ps-app .acct-toolbar,
+html[data-theme] body.ps-app .age-toolbar,
+html[data-theme] body.ps-app .customer-toolbar,
+html[data-theme] body.ps-app .grv-toolbar,
+html[data-theme] body.ps-app .po-toolbar,
+html[data-theme] body.ps-app .hist-toolbar,
+html[data-theme] body.ps-app .cc-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ps-control-gap);
+  align-items: flex-end;
+  margin: 0 0 var(--ps-gap);
+}
+html[data-theme] body.ps-app .audit-filters label,
+html[data-theme] body.ps-app .filters label,
+html[data-theme] body.ps-app .stmt-toolbar label,
+html[data-theme] body.ps-app .acct-toolbar label,
+html[data-theme] body.ps-app .age-toolbar label,
+html[data-theme] body.ps-app .customer-toolbar label,
+html[data-theme] body.ps-app .grv-toolbar label,
+html[data-theme] body.ps-app .po-toolbar label,
+html[data-theme] body.ps-app .hist-toolbar label,
+html[data-theme] body.ps-app .cc-filters label {
+  display: block;
+  font-size: 13px;
+  color: var(--ps-muted);
+  margin: 0 0 4px;
+}
+html[data-theme] body.ps-app .audit-filters input,
+html[data-theme] body.ps-app .filters input,
+html[data-theme] body.ps-app .stmt-toolbar input,
+html[data-theme] body.ps-app .acct-toolbar input,
+html[data-theme] body.ps-app .age-toolbar input,
+html[data-theme] body.ps-app .customer-toolbar input,
+html[data-theme] body.ps-app .grv-toolbar input,
+html[data-theme] body.ps-app .po-toolbar input,
+html[data-theme] body.ps-app .hist-toolbar input,
+html[data-theme] body.ps-app .cc-filters input,
+html[data-theme] body.ps-app .audit-filters select,
+html[data-theme] body.ps-app .filters select,
+html[data-theme] body.ps-app .stmt-toolbar select,
+html[data-theme] body.ps-app .acct-toolbar select,
+html[data-theme] body.ps-app .age-toolbar select,
+html[data-theme] body.ps-app .customer-toolbar select,
+html[data-theme] body.ps-app .grv-toolbar select,
+html[data-theme] body.ps-app .po-toolbar select,
+html[data-theme] body.ps-app .hist-toolbar select,
+html[data-theme] body.ps-app .cc-filters select { min-width: 140px; }
+
+html[data-theme] body.ps-app .actions,
+html[data-theme] body.ps-app .customer-actions,
+html[data-theme] body.ps-app .acct-actions,
+html[data-theme] body.ps-app .po-actions,
+html[data-theme] body.ps-app .supplier-actions,
+html[data-theme] body.ps-app .row-actions,
+html[data-theme] body.ps-app .button-container,
+html[data-theme] body.ps-app .check-row,
+html[data-theme] body.ps-app .mode-links,
+html[data-theme] body.ps-app .nav-links,
+html[data-theme] body.ps-app .pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ps-control-gap);
+  align-items: center;
+  margin: var(--ps-space-3) 0;
+}
+html[data-theme] body.ps-app .row-actions { gap: 6px; margin: 0; }
+html[data-theme] body.ps-app .actions form { display: inline; }
+
+html[data-theme] body.ps-app .tabs,
+html[data-theme] body.ps-app .cm-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 var(--ps-gap);
+}
+html[data-theme] body.ps-app .tabs a,
+html[data-theme] body.ps-app .cm-tabs label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--ps-line);
+  border-radius: 999px;
+  color: var(--ps-text);
+  text-decoration: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+html[data-theme] body.ps-app .tabs a.on,
+html[data-theme] body.ps-app .cm-tabs label:has(input:checked) {
+  background: var(--ps-yellow);
+  border-color: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  font-weight: 700;
+}
+html[data-theme] body.ps-app .cm-tabs input { width: auto; }
+
+html[data-theme] body.ps-app .customer-form,
+html[data-theme] body.ps-app .acct-form,
+html[data-theme] body.ps-app .pay-form,
+html[data-theme] body.ps-app .po-form,
+html[data-theme] body.ps-app .supplier-form,
+html[data-theme] body.ps-app .act-form,
+html[data-theme] body.ps-app .cm-form { max-width: 560px; }
+html[data-theme] body.ps-app .po-form { max-width: 960px; }
+html[data-theme] body.ps-app .customer-form label,
+html[data-theme] body.ps-app .acct-form label,
+html[data-theme] body.ps-app .pay-form label,
+html[data-theme] body.ps-app .po-form label,
+html[data-theme] body.ps-app .supplier-form label,
+html[data-theme] body.ps-app .act-form label,
+html[data-theme] body.ps-app .cm-form label {
+  display: block;
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+html[data-theme] body.ps-app .customer-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .customer-form select,
+html[data-theme] body.ps-app .customer-form textarea,
+html[data-theme] body.ps-app .acct-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .acct-form select,
+html[data-theme] body.ps-app .acct-form textarea,
+html[data-theme] body.ps-app .pay-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .pay-form select,
+html[data-theme] body.ps-app .pay-form textarea,
+html[data-theme] body.ps-app .po-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .po-form select,
+html[data-theme] body.ps-app .po-form textarea,
+html[data-theme] body.ps-app .supplier-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .supplier-form select,
+html[data-theme] body.ps-app .supplier-form textarea,
+html[data-theme] body.ps-app .act-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .act-form select,
+html[data-theme] body.ps-app .act-form textarea,
+html[data-theme] body.ps-app .cm-form input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme] body.ps-app .cm-form select,
+html[data-theme] body.ps-app .cm-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+html[data-theme] body.ps-app .customer-form textarea,
+html[data-theme] body.ps-app .acct-form textarea,
+html[data-theme] body.ps-app .pay-form textarea,
+html[data-theme] body.ps-app .po-form textarea,
+html[data-theme] body.ps-app .supplier-form textarea,
+html[data-theme] body.ps-app .act-form textarea,
+html[data-theme] body.ps-app .cm-form textarea { min-height: 72px; resize: vertical; }
+html[data-theme] body.ps-app .field { margin: 0 0 10px; }
+
+html[data-theme] body.ps-app .section,
+html[data-theme] body.ps-app .p95-section,
+html[data-theme] body.ps-app .block,
+html[data-theme] body.ps-app .panel {
+  margin: var(--ps-space-6) 0;
+  padding-top: var(--ps-space-3);
+  border-top: 1px solid var(--ps-line);
+}
+html[data-theme] body.ps-app .section h2,
+html[data-theme] body.ps-app .p95-section h2,
+html[data-theme] body.ps-app .block h2 { margin: 0 0 8px; font-size: 1.1rem; }
+html[data-theme] body.ps-app .panel { border-top: 0; padding-top: 0; margin: var(--ps-gap) 0; }
+html[data-theme] body.ps-app .detail-grid,
+html[data-theme] body.ps-app .stmt-header {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 8px 12px;
+  max-width: 720px;
+  margin: 0 0 var(--ps-gap);
+}
+html[data-theme] body.ps-app .stmt-header { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); max-width: none; }
+html[data-theme] body.ps-app .detail-grid dt,
+html[data-theme] body.ps-app .stmt-header dt,
+html[data-theme] body.ps-app .kv dt { color: var(--ps-muted); font-size: 13px; }
+html[data-theme] body.ps-app .detail-grid dd,
+html[data-theme] body.ps-app .stmt-header dd { margin: 0; }
+html[data-theme] body.ps-app .stmt-header dd { font-weight: 600; }
+html[data-theme] body.ps-app .kv { font-size: 13px; }
+html[data-theme] body.ps-app .kv dt { font-weight: 600; }
+html[data-theme] body.ps-app .kv dd { margin: 0 0 8px; }
+html[data-theme] body.ps-app .meta-box,
+html[data-theme] body.ps-app .po-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 24px;
+  margin: 12px 0 20px;
+}
+@media (max-width: 700px) {
+html[data-theme] body.ps-app .meta-box,
+html[data-theme] body.ps-app .po-meta,
+html[data-theme] body.ps-app .po-grid,
+html[data-theme] body.ps-app .detail-grid { grid-template-columns: 1fr; }
+}
+html[data-theme] body.ps-app .meta,
+html[data-theme] body.ps-app .mgmt,
+html[data-theme] body.ps-app .cm-meta,
+html[data-theme] body.ps-app .cm-filter,
+html[data-theme] body.ps-app .review-box { margin: 8px 0 12px; font-size: 13px; line-height: 1.55; }
+html[data-theme] body.ps-app .meta span,
+html[data-theme] body.ps-app .summary span,
+html[data-theme] body.ps-app .summary-grid span { display: inline-block; margin-right: 16px; }
+html[data-theme] body.ps-app .summary-grid,
+html[data-theme] body.ps-app .stmt-summary { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 12px 0; font-size: 13px; }
+
+html[data-theme] body.ps-app .cm-cards,
+html[data-theme] body.ps-app .cc-summary,
+html[data-theme] body.ps-app .cards,
+html[data-theme] body.ps-app .p95-grid,
+html[data-theme] body.ps-app .summary:has(> div) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--ps-control-gap);
+  margin: var(--ps-gap) 0;
+}
+html[data-theme] body.ps-app .cm-card,
+html[data-theme] body.ps-app .cc-summary .card,
+html[data-theme] body.ps-app .cards .card,
+html[data-theme] body.ps-app .p95-kpi,
+html[data-theme] body.ps-app .summary > div {
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+html[data-theme] body.ps-app .cm-card .lbl,
+html[data-theme] body.ps-app .cards .card .lbl,
+html[data-theme] body.ps-app .cc-summary .label,
+html[data-theme] body.ps-app .p95-kpi span {
+  display: block;
+  font-size: 12px;
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-app .cm-card .val,
+html[data-theme] body.ps-app .cc-summary .value,
+html[data-theme] body.ps-app .cards .card strong,
+html[data-theme] body.ps-app .p95-kpi b {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme] body.ps-app .cm-warn {
+  border: 1px solid var(--ps-danger);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: var(--ps-gap) 0;
+}
+html[data-theme] body.ps-app .cm-warn h3 { margin: 0 0 8px; color: var(--ps-danger); }
+
+html[data-theme] body.ps-app .p95-tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--ps-row);
+  border: 1px solid var(--ps-line);
+}
+html[data-theme] body.ps-app .p95-tag.VALID_CURRENT { color: var(--ps-green); }
+html[data-theme] body.ps-app .p95-tag.HISTORICAL { color: var(--ps-warn); }
+html[data-theme] body.ps-app .p95-tag.MISSING { color: var(--ps-danger); }
+html[data-theme] body.ps-app .p95-tag.UNRESOLVED_CONFLICT,
+html[data-theme] body.ps-app .p95-tag.PROVABLE_INCONSISTENCY { color: var(--ps-blue); }
+html[data-theme] body.ps-app .p95-policy li { margin-bottom: 0.4rem; }
+
+html[data-theme] body.ps-app .suggestions {
+  position: absolute;
+  z-index: 1000;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 10px;
+  box-shadow: var(--ps-shadow);
+}
+html[data-theme] body.ps-app .suggestions div { padding: 8px 12px; cursor: pointer; color: var(--ps-text); }
+html[data-theme] body.ps-app .suggestions div:hover { background: var(--ps-row); }
+html[data-theme] body.ps-app button.delete-row {
+  background: transparent;
+  color: var(--ps-danger);
+  border: 1px solid var(--ps-danger);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+html[data-theme] body.ps-app button.delete-row:hover { background: var(--ps-danger); color: #fff; }
+
+/* Page layouts */
+html[data-theme] body.ps-app .grv-wrap,
+html[data-theme] body.ps-app .p95-wrap { max-width: 1100px; }
+html[data-theme] body.ps-app .po-view { max-width: 900px; }
+html[data-theme] body.ps-app .po-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+html[data-theme] body.ps-app .cm-grid { display: grid; grid-template-columns: 1fr; gap: 28px; max-width: 1100px; }
+@media (min-width: 960px) { html[data-theme] body.ps-app .cm-grid { grid-template-columns: 380px 1fr; } }
+html[data-theme] body.ps-app .cm-ro { background: var(--ps-card-2); }
+html[data-theme] body.ps-app .alloc-table { max-width: 720px; }
+html[data-theme] body.ps-app .po-lines input,
+html[data-theme] body.ps-app .po-lines select,
+html[data-theme] body.ps-app .alloc-table input { width: 100%; box-sizing: border-box; }
+html[data-theme] body.ps-app .ps-inv-status { font-size: 12px; margin-top: 4px; }
+html[data-theme] body.ps-app .barcode { text-align: center; }
+/* Items list */
+html[data-theme] body.ps-app .ps-items-table { min-width: 1180px; }
+html[data-theme] body.ps-app .ps-items-table th,
+html[data-theme] body.ps-app .ps-items-table td { vertical-align: middle; }
+html[data-theme] body.ps-app .ps-items-table .col-id { min-width: 7rem; white-space: nowrap; }
+html[data-theme] body.ps-app .ps-items-table .col-product { min-width: 12rem; }
+html[data-theme] body.ps-app .ps-items-table .col-barcode { min-width: 8rem; }
+html[data-theme] body.ps-app .ps-items-table .col-money { min-width: 6.5rem; }
+html[data-theme] body.ps-app .ps-items-table .col-cat { min-width: 8rem; }
+html[data-theme] body.ps-app .ps-items-table .col-status { min-width: 5.5rem; white-space: nowrap; }
+html[data-theme] body.ps-app .ps-items-table .col-actions { min-width: 6.5rem; width: 6.5rem; }
+html[data-theme] body.ps-app .ps-items-table input.ps-input,
+html[data-theme] body.ps-app .ps-items-table select.ps-input,
+html[data-theme] body.ps-app .ps-supplier-table input.ps-input,
+html[data-theme] body.ps-app .ps-supplier-table textarea.ps-input { width: 100%; min-width: 0; box-sizing: border-box; }
+html[data-theme] body.ps-app .ps-cell-clip { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme] body.ps-app .ps-items-toolbar .export-form {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--ps-control-gap);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+/* Suppliers list */
+html[data-theme] body.ps-app .ps-supplier-table { min-width: 960px; }
+html[data-theme] body.ps-app .ps-supplier-table textarea.ps-input { min-height: 48px; }
+html[data-theme] body.ps-app .col-actions { width: 6.5rem; }
+/* Z report chart */
+html[data-theme] body.ps-app .ps-chart-card { margin-top: 0; }
+html[data-theme] body.ps-app .ps-chart-wrap { position: relative; width: 100%; min-height: 280px; height: min(420px, 55vh); padding: 0.25rem 0 0.5rem; }
+html[data-theme] body.ps-app .ps-chart-empty { display: flex; align-items: center; justify-content: center; min-height: 220px; color: var(--ps-muted); font-size: 0.9rem; }
+/* Barcode labels sheet */
+html[data-theme] body.ps-app .labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+html[data-theme] body.ps-app .labels .label {
+  border: 1px dashed var(--ps-line);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  background: #fff;
+  color: #111;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+html[data-theme] body.ps-app .labels .label .name { font-size: 12px; font-weight: 700; margin-bottom: 4px; color: #111; }
+html[data-theme] body.ps-app .labels .label .meta { font-size: 11px; color: #333; margin: 2px 0; }
+html[data-theme] body.ps-app .labels .label img { max-width: 100%; height: auto; }
+html[data-theme] body.ps-app .labels .label .code { font-size: 11px; letter-spacing: 0.04em; margin-top: 4px; color: #111; }
+/* Print: hide app chrome and page controls */
+@media print {
+html[data-theme] body.ps-app .ps-side,
+html[data-theme] body.ps-app .ps-top,
+html[data-theme] body.ps-app .ps-nav-backdrop,
+html[data-theme] body.ps-app .ps-link-row,
+html[data-theme] body.ps-app .ps-theme-switch,
+html[data-theme] body.ps-app .ps-items-toolbar,
+html[data-theme] body.ps-app .ps-action-menu,
+html[data-theme] body.ps-app .po-actions,
+html[data-theme] body.ps-app .no-print,
+html[data-theme] body.ps-app .filter-form .ps-btn { display: none !important; }
+html[data-theme] body.ps-app .labels { gap: 6px; }
+html[data-theme] body.ps-app .labels .label { border: 1px solid #000; }
+}
+
+html[data-theme] body.ps-app .results .summary {
+  background: var(--ps-card);
+  border: 1px solid var(--ps-line);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin: var(--ps-space-3) 0;
+}
+html[data-theme] body.ps-app .results .summary p { margin: 6px 0; }
+html[data-theme] body.ps-app .section.section-first { border-top: 0; padding-top: 0; margin-top: 0; }
+html[data-theme] body.ps-app .ps-kpi-value.ps-kpi-value-sm { font-size: 16px; }
+html[data-theme] body.ps-app h2.ps-subhead { font-size: 16px; margin: 24px 0 12px; }
+html[data-theme] body.ps-app h2.ps-subhead.ps-subhead-first { margin-top: 0; }
+
+/* Phase 18 — Super Admin managing a client company */
+html[data-theme] body.ps-app .ps-platform-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  flex-wrap: wrap;
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  border: 1px solid rgba(47, 111, 237, 0.4);
+  border-left: 4px solid var(--ps-blue);
+  border-radius: 10px;
+  background: rgba(47, 111, 237, 0.08);
+  color: var(--ps-text);
+}
+html[data-theme] body.ps-app .ps-platform-banner form { margin: 0; }
+html[data-theme] body.ps-app .ps-platform-banner-meta { color: var(--ps-muted); font-size: 0.86rem; }
+html[data-theme] body.ps-app .ps-platform-banner-text > .ps-platform-banner-meta { margin-top: 2px; }
+
+/* Multi-currency drawer tabs (cash reconciliation / till close) */
+.ps-cur-tabs { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0 .25rem; }
+.ps-cur-tabs .ps-badge { margin-left: .3rem; font-size: .7rem; }

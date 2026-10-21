@@ -1,0 +1,6 @@
+# Phase 17 — minimal OpenSSL config for ZIMRA device key/CSR generation.
+# Shipped so a broken system OPENSSL_CONF (e.g. set by psqlODBC on Windows) cannot break PHP openssl_*.
+[req]
+default_bits = 2048
+distinguished_name = dn
+[dn]

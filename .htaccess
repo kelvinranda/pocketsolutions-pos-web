@@ -1,0 +1,66 @@
+# Phase 16 + 2026-10-13 health-check — deny web download of secrets, dumps, archives,
+# VCS, deps, CLI/tests and any underscore-prefixed (internal/debug) file.
+# Requires AllowOverride FileInfo/AuthConfig (typical XAMPP / cPanel).
+
+Options -Indexes
+
+<IfModule mod_authz_core.c>
+  # Config / secrets
+  <FilesMatch "(?i)^(pockets_config\.php|pockets_config\.local\.php|\.env.*|composer\.(json|lock)|\.htaccess|\.htpasswd)$">
+    Require all denied
+  </FilesMatch>
+
+  # SQL dumps, logs, backups, archives, office/data exports left on disk
+  <FilesMatch "(?i)\.(sql|gz|tgz|tar|zip|7z|rar|log|bak|backup|dump|old|orig|swp|py|md|xlsx|xls|csv)$">
+    Require all denied
+  </FilesMatch>
+
+  # The product import template is the one spreadsheet staff may download
+  <Files "pos_import_template.xlsx">
+    Require all granted
+  </Files>
+
+  # PHP error log files have no extension (error_log, php_errorlog)
+  <FilesMatch "(?i)^(error_log|php_errorlog|php_error\.log)$">
+    Require all denied
+  </FilesMatch>
+
+  # VCS / editor / OS junk
+  <FilesMatch "(?i)^(\.git|\.gitignore|\.gitattributes|\.svn|\.hg|\.DS_Store|Thumbs\.db)$">
+    Require all denied
+  </FilesMatch>
+
+  # Regression / CLI tools and any underscore-prefixed internal file must not be web-triggered
+  <FilesMatch "(?i)^(_.*|cli_.*)$">
+    Require all denied
+  </FilesMatch>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Block path prefixes even if FilesMatch is bypassed by negotiation
+  RewriteRule (^|/)\.git(/|$) - [F,L]
+  RewriteRule (^|/)vendor(/|$) - [F,L]
+  RewriteRule (^|/)config(/|$) - [F,L]
+  RewriteRule (^|/)docs(/|$) - [F,L]
+  RewriteRule (^|/)includes(/|$) - [F,L]
+  RewriteRule (^|/)escpos-php(/|$) - [F,L]
+  RewriteRule (^|/)backups?(/|$) - [F,L]
+  RewriteRule (^|/)logs?(/|$) - [F,L]
+  RewriteRule (^|/)sql(/|$) - [F,L]
+  RewriteRule (^|/)_[^/]*(/|$) - [F,L]
+</IfModule>
+
+# Never show PHP errors to browsers (applies when PHP runs as an Apache module).
+# On PHP-FPM / CGI hosts set display_errors=Off in php.ini or the host's PHP settings instead.
+<IfModule mod_php.c>
+  php_flag display_errors Off
+  php_flag display_startup_errors Off
+  php_flag log_errors On
+</IfModule>
+<IfModule mod_php7.c>
+  php_flag display_errors Off
+  php_flag display_startup_errors Off
+  php_flag log_errors On
+</IfModule>

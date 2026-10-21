@@ -1,0 +1,7 @@
+# Phase 16 — docs are for operators via filesystem; deny HTTP browse/download.
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Deny from all
+</IfModule>

@@ -1,0 +1,9 @@
+# Pass the Authorization header through to PHP (Apache + PHP-CGI/FPM drop it otherwise).
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+</IfModule>
+<Files "_bootstrap.php">
+Require all denied
+</Files>

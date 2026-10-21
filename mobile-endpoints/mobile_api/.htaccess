@@ -1,0 +1,4 @@
+# Pass Authorization header through to PHP on Apache/XAMPP.
+RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

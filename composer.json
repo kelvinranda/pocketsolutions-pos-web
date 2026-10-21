@@ -1,0 +1,20 @@
+{
+    "require": {
+        "guzzlehttp/guzzle": "*",
+        "ergebnis/json-printer": "*",
+        "maatwebsite/excel": "^2.1",
+        "picqer/php-barcode-generator": "^3.2",
+        "dompdf/dompdf": "^3.1",
+        "endroid/qr-code": "^6.0",
+        "mike42/escpos-php": "^4.0",
+        "mpdf/mpdf": "^8.2",
+        "phpoffice/phpspreadsheet": "^5.5",
+        "setasign/fpdf": "^1.8",
+        "printnode/printnode-php": "^2.1"
+    },
+    "config": {
+        "allow-plugins": {
+            "kylekatarnls/update-helper": true
+        }
+    }
+}

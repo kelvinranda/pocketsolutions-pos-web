@@ -1,0 +1,31 @@
+# Pockets POS web — keep out of git (2026-10-21)
+
+# The Windows till is its own repo (pocketsolutions-pos-desktop)
+/pocketsolutions-pos-desktop/
+
+# Secrets: real database password lives only on each server
+/pockets_config.local.php
+/config/pockets_config.php
+*.local.php
+.env
+
+# Composer packages (restore with: composer install)
+/vendor/
+
+# Old copies, backups, scratch output
+/_to_delete/
+/_zimra_backup_*/
+/manualcap_tmp_out/
+*.zip
+*.tgz
+*.tar.gz
+*.bak
+error_log
+*.log
+
+# Editors / OS
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
