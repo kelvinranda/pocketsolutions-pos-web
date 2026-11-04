@@ -544,6 +544,143 @@ html[data-theme] body.ps-pos button:focus-visible {
 html[data-theme] body.ps-pos .pcard,
 html[data-theme] body.ps-pos .sheet { border-radius: var(--ps-radius-card); }
 
+/* =====================================================================
+ * Phase 3: the till (ajax_pos.php). CSS only; markup and JS untouched.
+ * Big tap targets stay (44px actions, 36px steppers).
+ * ===================================================================== */
+
+/* ---------- Category tabs: neutral tab + the category's own colour as a left stripe ----------
+ * Each .cat carries its colour inline (set per Button Category on the Items page). The 6px
+ * transparent left border lets that inline background show as a stripe; an inset shadow
+ * paints the rest of the tab in the card colour. */
+html[data-theme] body.ps-pos .cat {
+  min-height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-left: 6px solid transparent;
+  border-radius: var(--ps-radius-control);
+  background-clip: border-box;
+  box-shadow: inset 0 0 0 1px var(--ps-line), inset 0 0 0 999px var(--ps-card);
+  color: var(--ps-text);
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+  transition: box-shadow 120ms ease;
+}
+html[data-theme] body.ps-pos .cat:hover:not(.on) {
+  box-shadow: inset 0 0 0 1px var(--ps-line-strong), inset 0 0 0 999px var(--ps-row), inset 0 0 0 999px var(--ps-card);
+}
+html[data-theme] body.ps-pos .cat.on,
+html[data-theme="light"] body.ps-pos .cat.on {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--ps-yellow), inset 0 0 0 999px var(--ps-yellow-soft), inset 0 0 0 999px var(--ps-card);
+  font-weight: 700;
+}
+html[data-theme] body.ps-pos .cat:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- Product cards ---------- */
+html[data-theme] body.ps-pos .pcard {
+  padding: 16px 16px 12px;
+  border-radius: var(--ps-radius-card);
+  transition: border-color 120ms ease;
+}
+html[data-theme] body.ps-pos .pcard:hover { border-color: var(--ps-line-strong); }
+html[data-theme] body.ps-pos .pname {
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+html[data-theme] body.ps-pos .pstock {
+  margin-top: 4px;
+  color: var(--ps-muted);
+  font-size: 12.5px;
+}
+html[data-theme] body.ps-pos .pprice {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme] body.ps-pos .ppack { border-top-style: solid; }
+
+/* ---------- Order pane ---------- */
+html[data-theme] body.ps-pos .order { background: var(--ps-bg-elev); }
+html[data-theme] body.ps-pos .order-foot { border-top: 1px solid var(--ps-line); padding-top: 12px; }
+html[data-theme] body.ps-pos .order-foot .total {
+  margin: 2px 0;
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+html[data-theme] body.ps-pos .order-foot .total:has(#totalAmount) {
+  margin: 8px 0 4px;
+  color: var(--ps-text);
+  font-family: var(--ps-font-display) !important;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+html[data-theme] body.ps-pos .oline-price { font-weight: 700; }
+
+/* ---------- Order actions: one main action (Place order), the rest secondary ---------- */
+html[data-theme] body.ps-pos .order-actions .btn {
+  min-height: 44px;
+  border-radius: var(--ps-radius-control);
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+html[data-theme] body.ps-pos .btn-yellow:hover:not(:disabled) { background: var(--ps-yellow-hi); }
+html[data-theme] body.ps-pos .btn-blue,
+html[data-theme] body.ps-pos .btn-gray {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+html[data-theme] body.ps-pos .btn-blue:hover:not(:disabled),
+html[data-theme] body.ps-pos .btn-gray:hover:not(:disabled) {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line-strong);
+}
+html[data-theme] body.ps-pos #discardCartBtn {
+  color: var(--ps-danger);
+  border-color: color-mix(in oklab, var(--ps-danger) 35%, var(--ps-line));
+}
+html[data-theme] body.ps-pos #discardCartBtn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ps-danger) 10%, var(--ps-card));
+  border-color: var(--ps-danger);
+}
+html[data-theme] body.ps-pos .btn:active:not(:disabled) { transform: translateY(1px); }
+html[data-theme] body.ps-pos .btn:disabled {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  border: 1px solid var(--ps-line);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* ---------- Bottom nav ---------- */
+html[data-theme] body.ps-pos .nav { background: var(--ps-bg-elev); }
+html[data-theme] body.ps-pos .nav a,
+html[data-theme] body.ps-pos .nav button:not(.fab) {
+  padding: 8px 12px;
+  border-radius: var(--ps-radius-control);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+html[data-theme] body.ps-pos .nav a:hover,
+html[data-theme] body.ps-pos .nav button:not(.fab):hover { color: var(--ps-text); background: var(--ps-row); }
+html[data-theme] body.ps-pos .nav a.on,
+html[data-theme] body.ps-pos .nav button.on {
+  color: var(--ps-text);
+  font-weight: 700;
+  background: var(--ps-yellow-soft);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-theme] body:is(.ps-app, .ps-pos) * { transition-duration: 0ms !important; }
   html[data-theme] body:is(.ps-app, .ps-pos) :is(button, .ps-btn):active { transform: none !important; }
