@@ -625,7 +625,19 @@ html[data-theme] body.ps-pos .order-foot .total:has(#totalAmount) {
 }
 html[data-theme] body.ps-pos .oline-price { font-weight: 700; }
 
-/* ---------- Order actions: one main action (Place order), the rest secondary ---------- */
+/* ---------- Order actions: Print / Submit is the main action, full width on top;
+ * View ticket, Place order and Clear cart share the row below (owner's layout). ---------- */
+html[data-theme] body.ps-pos .order-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+html[data-theme] body.ps-pos .order-actions .btn.btn-blue {
+  grid-column: 1 / -1;
+  order: -1;
+  min-height: 52px;
+  font-size: 16px;
+  font-weight: 700;
+}
+html[data-theme] body.ps-pos .order-actions .btn { padding: 4px 8px; }
 html[data-theme] body.ps-pos .order-actions .btn {
   min-height: 44px;
   border-radius: var(--ps-radius-control);
@@ -633,13 +645,22 @@ html[data-theme] body.ps-pos .order-actions .btn {
   font-weight: 600;
   transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
+/* main: Print / Submit in yellow; Place order joins the secondary outlines */
+html[data-theme] body.ps-pos .order-actions .btn-blue {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  border: 0;
+}
+html[data-theme] body.ps-pos .order-actions .btn-blue:hover:not(:disabled) { background: var(--ps-yellow-hi); }
 html[data-theme] body.ps-pos .btn-yellow:hover:not(:disabled) { background: var(--ps-yellow-hi); }
+html[data-theme] body.ps-pos .order-actions .btn-yellow,
 html[data-theme] body.ps-pos .btn-blue,
 html[data-theme] body.ps-pos .btn-gray {
   background: var(--ps-card);
   color: var(--ps-text);
   border: 1px solid var(--ps-line);
 }
+html[data-theme] body.ps-pos .order-actions .btn-yellow:hover:not(:disabled),
 html[data-theme] body.ps-pos .btn-blue:hover:not(:disabled),
 html[data-theme] body.ps-pos .btn-gray:hover:not(:disabled) {
   background: var(--ps-card-2);
@@ -680,6 +701,93 @@ html[data-theme] body.ps-pos .nav button.on {
   font-weight: 700;
   background: var(--ps-yellow-soft);
 }
+
+/* =====================================================================
+ * Phase 4: pages with their own colours. Overrides only; page files are
+ * left alone (most carry the owner's uncommitted work). Print documents
+ * (receipts, slips, PDFs) stay black on white on purpose.
+ * ===================================================================== */
+
+/* ---------- Admin Home shortcut tiles: neutral cards, each tile's own colour as a left stripe ----------
+ * Colours are inline per tile (admin_dashboard.php). Same stripe technique as the till's category tabs. */
+html[data-theme] body.ps-app .ps-tile {
+  min-height: 96px;
+  padding: 16px;
+  border: 0;
+  border-left: 6px solid transparent;
+  border-radius: var(--ps-radius-card);
+  background-clip: border-box;
+  box-shadow: inset 0 0 0 1px var(--ps-line), inset 0 0 0 999px var(--ps-card);
+  color: var(--ps-text) !important; /* ps-theme sets #fff !important */
+  font-size: 15px;
+  font-weight: 600;
+  filter: none;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+html[data-theme] body.ps-app .ps-tile span {
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+html[data-theme] body.ps-app .ps-tile:hover {
+  filter: none;
+  box-shadow: inset 0 0 0 1px var(--ps-line-strong), inset 0 0 0 999px var(--ps-card-2);
+}
+html[data-theme] body.ps-app .ps-tile:active { transform: translateY(1px); }
+html[data-theme] body.ps-app .ps-tile:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- Shared alerts and banners still carrying the old rgba pinks/greens/blues ---------- */
+html[data-theme] body.ps-app .ps-alert-destructive,
+html[data-theme] body.ps-app .error:not(:empty) {
+  background: color-mix(in oklab, var(--ps-danger) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ps-danger) 32%, transparent);
+  color: var(--ps-danger);
+}
+html[data-theme] body.ps-app .ps-alert-warn {
+  background: color-mix(in oklab, var(--ps-warn) 12%, transparent);
+  border-color: color-mix(in oklab, var(--ps-warn) 35%, transparent);
+  color: var(--ps-warn);
+}
+html[data-theme] body.ps-app .ps-alert-success,
+html[data-theme] body.ps-app .success:not(:empty) {
+  background: color-mix(in oklab, var(--ps-green) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ps-green) 32%, transparent);
+  color: var(--ps-green);
+}
+html[data-theme] body.ps-app .ps-platform-banner {
+  border-color: color-mix(in oklab, var(--ps-blue) 35%, var(--ps-line));
+  border-left-color: var(--ps-blue);
+  background: color-mix(in oklab, var(--ps-blue) 8%, var(--ps-card));
+}
+
+/* ---------- Page-level colours (doubled .ps-app beats the pages' own <style> blocks) ---------- */
+/* Profit report: chart, KPI boxes, loss rows, legend swatches */
+html[data-theme] body.ps-app.ps-app .pr-kpis div { border-color: var(--ps-line); border-radius: var(--ps-radius-control); }
+html[data-theme] body.ps-app.ps-app .pr-bar { fill: var(--ps-green); }
+html[data-theme] body.ps-app.ps-app .pr-neg { fill: var(--ps-danger); }
+html[data-theme] body.ps-app.ps-app .pr-line { stroke: var(--ps-yellow); }
+html[data-theme] body.ps-app.ps-app .pr-axis { stroke: var(--ps-line-strong); }
+html[data-theme] body.ps-app.ps-app .pr-tick { fill: var(--ps-muted); }
+html[data-theme] body.ps-app.ps-app tr.neg td { color: var(--ps-danger); }
+html[data-theme] body.ps-app.ps-app .pr-legend i[style*="178a43"] { background: var(--ps-green) !important; }
+html[data-theme] body.ps-app.ps-app .pr-legend i[style*="c2410c"] { background: var(--ps-danger) !important; }
+html[data-theme] body.ps-app.ps-app .pr-legend i[style*="f5b400"] { background: var(--ps-yellow) !important; }
+/* Stock take records: gains and losses */
+html[data-theme] body.ps-app.ps-app .str-neg { color: var(--ps-danger); }
+html[data-theme] body.ps-app.ps-app .str-pos { color: var(--ps-green); }
+/* Packs: warning text was raw yellow (unreadable on white) */
+html[data-theme] body.ps-app.ps-app .pk-warn { color: var(--ps-warn); }
+/* Quotation item search dropdown */
+html[data-theme] body.ps-app.ps-app .q-results {
+  border-color: var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  box-shadow: var(--ps-shadow);
+}
+html[data-theme] body.ps-app.ps-app .q-results button:hover,
+html[data-theme] body.ps-app.ps-app .q-results button:focus { background: var(--ps-row); }
 
 @media (prefers-reduced-motion: reduce) {
   html[data-theme] body:is(.ps-app, .ps-pos) * { transition-duration: 0ms !important; }
