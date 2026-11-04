@@ -443,6 +443,26 @@ html[data-theme] body.ps-app .ps-nav-group:focus-visible {
   outline-offset: 1px;
 }
 
+/* ---------- Sidebar scrollbar (2026-11-04): slim, no arrows, no track; faint until the sidebar is hovered ---------- */
+html[data-theme] body.ps-app .ps-nav {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ps-line) transparent;
+  scrollbar-gutter: stable;
+}
+html[data-theme] body.ps-app .ps-nav:hover,
+html[data-theme] body.ps-app .ps-nav:focus-within {
+  scrollbar-color: var(--ps-line-strong) transparent;
+}
+/* Older Chromium / Safari without scrollbar-color */
+html[data-theme] body.ps-app .ps-nav::-webkit-scrollbar { width: 6px; }
+html[data-theme] body.ps-app .ps-nav::-webkit-scrollbar-track { background: transparent; }
+html[data-theme] body.ps-app .ps-nav::-webkit-scrollbar-button { display: none; }
+html[data-theme] body.ps-app .ps-nav::-webkit-scrollbar-thumb {
+  background: var(--ps-line);
+  border-radius: 999px;
+}
+html[data-theme] body.ps-app .ps-nav:hover::-webkit-scrollbar-thumb { background: var(--ps-line-strong); }
+
 /* ---------- Light/Dark switch: one size on every page (app, till; login matches in login/dusk.css) ---------- */
 html[data-theme] body:is(.ps-app, .ps-pos) .ps-theme-switch {
   display: inline-flex;
