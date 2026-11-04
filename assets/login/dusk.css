@@ -191,16 +191,25 @@ body.hm-dusk {
 .till__cats { display: flex; gap: var(--space-xs); margin-bottom: var(--space-xs); }
 .till__cat {
   flex: 1;
+  min-width: 0;
+  min-height: 32px;
   padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm);
+  border: 0;
   border-left: 4px solid var(--cat, var(--cat-all));
   border-radius: 8px;
   background: var(--till-card);
   box-shadow: inset 0 0 0 1px var(--till-rule);
-  font-weight: 600;
+  color: var(--color-ink);
+  font: 600 12.5px/1.2 var(--font-body);
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease), box-shadow var(--dur-micro) var(--ease);
 }
+.till__cat:hover:not(.is-on) { box-shadow: inset 0 0 0 1px var(--field-border-hover); }
+.till__cat:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .till__cat--all { --cat: var(--cat-all); }
 .till__cat--groc { --cat: var(--cat-groc); }
 .till__cat--drink { --cat: var(--cat-drink); }
@@ -209,6 +218,7 @@ body.hm-dusk {
   box-shadow: inset 0 0 0 1.5px var(--color-yellow);
 }
 .till__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); }
+.till__grid { align-content: start; }
 .till__card {
   display: grid;
   gap: 2px;
@@ -216,24 +226,36 @@ body.hm-dusk {
   border-radius: var(--radius-inner);
   background: var(--till-card);
   box-shadow: inset 0 0 0 1px var(--till-rule);
+  transition: box-shadow var(--dur-micro) var(--ease);
 }
+.till__card.is-in-cart { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-yellow) 55%, var(--till-rule)); }
 .till__name { font-weight: 600; font-size: 13px; }
-.till__stock { color: var(--color-muted); font-size: 11.5px; }
+.till__stock { color: var(--color-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.till__stock.is-low { color: var(--notice-ink); font-weight: 600; }
 .till__foot { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-xs); }
 .till__price { font-weight: 700; font-variant-numeric: tabular-nums; }
 .till__step { display: inline-flex; align-items: center; gap: var(--space-2xs); }
-.till__step > span {
+.till__btn {
   display: inline-grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
+  background: transparent;
   box-shadow: inset 0 0 0 1px var(--till-rule);
   color: var(--color-yellow);
-  font-weight: 700;
+  font: 700 15px/1 var(--font-body);
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease), box-shadow var(--dur-micro) var(--ease), transform var(--dur-micro) var(--ease);
 }
-html[data-theme="light"] .till__step > span { color: var(--color-yellow-text); }
-.till__step > .till__qty { width: auto; min-width: 20px; box-shadow: none; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+html[data-theme="light"] .till__btn { color: var(--color-yellow-text); }
+.till__btn:hover:not(:disabled) { background: color-mix(in oklab, var(--color-yellow) 18%, transparent); box-shadow: inset 0 0 0 1px var(--color-yellow); }
+.till__btn:active:not(:disabled) { transform: scale(0.92); }
+.till__btn:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.till__btn:disabled { color: var(--color-muted); background: transparent; opacity: 0.45; cursor: not-allowed; }
+.till__qty { min-width: 20px; color: var(--color-ink); font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
 .till__order {
   display: flex;
   flex-direction: column;
@@ -256,6 +278,14 @@ html[data-theme="light"] .till__step > span { color: var(--color-yellow-text); }
 }
 .till__currency span { padding: 2px var(--space-xs); border-radius: var(--radius-pill); }
 .till__currency .is-on { background: var(--till-card); color: var(--color-ink); box-shadow: inset 0 0 0 1px var(--till-rule); }
+.till__lines {
+  display: flex;
+  flex-direction: column;
+  min-height: 7.5rem;
+  max-height: 9.5rem;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 .till__line {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -263,6 +293,8 @@ html[data-theme="light"] .till__step > span { color: var(--color-yellow-text); }
   padding: var(--space-xs) 0;
   border-bottom: 1px solid var(--till-rule);
 }
+.till__line.is-changed { animation: line-in 260ms var(--ease); }
+.till__empty { margin: auto 0; color: var(--color-muted); text-align: center; }
 .till__line > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .till__x { color: var(--color-muted); font-variant-numeric: tabular-nums; }
 .till__amt { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -279,12 +311,86 @@ html[data-theme="light"] .till__step > span { color: var(--color-yellow-text); }
 .till__pay {
   display: grid;
   place-items: center;
-  min-height: 34px;
+  min-height: 36px;
   margin-top: var(--space-xs);
+  border: 0;
   border-radius: 8px;
   background: var(--color-yellow);
   color: var(--color-yellow-ink);
-  font-weight: 700;
+  font: 700 13px/1 var(--font-body);
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease), transform var(--dur-micro) var(--ease);
+}
+.till__pay:hover:not(:disabled) { background: var(--color-yellow-hi); }
+.till__pay:active:not(:disabled) { transform: translateY(1px); }
+.till__pay:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.till__pay:disabled { background: var(--till-card); color: var(--color-muted); box-shadow: inset 0 0 0 1px var(--till-rule); cursor: not-allowed; }
+/* sale-complete panel: covers the order pane after Print / Submit */
+.till__order { position: relative; }
+.till__done {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2xs);
+  padding: var(--space-md);
+  border-radius: var(--radius-inner);
+  background: var(--color-paper-2);
+  box-shadow: inset 0 0 0 1px var(--till-rule);
+  text-align: center;
+  animation: done-in 240ms var(--ease) both;
+}
+.till__done[hidden] { display: none; }
+.till__done-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: var(--space-2xs);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--color-sage) 18%, transparent);
+  color: var(--color-sage);
+}
+.till__done-mark svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.till__done-title { color: var(--color-sage); font-weight: 700; font-size: 13px; }
+.till__done-amt { font: 600 24px/1.1 var(--font-display); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.till__done-meta {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: var(--space-md);
+  margin: var(--space-xs) 0 var(--space-sm);
+}
+.till__done-meta div { display: grid; gap: 1px; }
+.till__done-meta dt { color: var(--color-muted); font-size: 11px; }
+.till__done-meta dd { margin: 0; font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; }
+.till__done-new {
+  min-height: 32px;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-ink);
+  font: 600 12.5px/1 var(--font-body);
+  cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease);
+}
+.till__done-new:hover { background: color-mix(in oklab, var(--color-ink) 7%, transparent); }
+.till__done-new:active { transform: translateY(1px); }
+.till__done-new:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ---------- Sign-in ---------- */
@@ -617,9 +723,17 @@ html[data-theme="light"] .caps svg { stroke: var(--color-focus); }
   to { opacity: 1; transform: none; }
 }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes done-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes line-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .signin, .till, .modal[open], .modal[open]::backdrop { animation: none; }
+  .signin, .till, .modal[open], .modal[open]::backdrop, .till__line.is-changed, .till__done { animation: none; }
   .btn__spinner { animation-duration: 2s; }
   .hm-dusk *, .hm-dusk *::before, .hm-dusk *::after { transition-duration: 0ms !important; }
 }

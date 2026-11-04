@@ -161,31 +161,47 @@ if (isset($error_message)) {
                 <p>Ring up sales, track stock, and keep every receipt in one point of sale.</p>
             </section>
 
-            <!-- Product preview: a built replica of the Pockets till with demo items (no real company,
-                 user or stock data). It uses the page's colour tokens, so it follows Light/Dark. -->
-            <figure class="till glass" role="img" aria-label="The Pockets till: product cards on the left, the cart with its total and the Print / Submit button on the right.">
-                <div class="till__menu" aria-hidden="true">
-                    <div class="till__cats">
-                        <span class="till__cat till__cat--all is-on">All items</span>
-                        <span class="till__cat till__cat--groc">Groceries</span>
-                        <span class="till__cat till__cat--drink">Drinks</span>
+            <!-- Demo till: a built replica of the Pockets till with sample items (no real company, user or
+                 stock data). Static here; the script below makes it work in the browser only. Nothing is
+                 sent to the server or saved. Uses the page's colour tokens, so it follows Light/Dark. -->
+            <section class="till glass" aria-labelledby="tillTitle" data-till>
+                <h2 id="tillTitle" class="sr-only">Try the Pockets till</h2>
+                <div class="till__menu">
+                    <div class="till__cats" role="group" aria-label="Categories">
+                        <button type="button" class="till__cat till__cat--all is-on" data-cat="all" aria-pressed="true">All items</button>
+                        <button type="button" class="till__cat till__cat--groc" data-cat="groc" aria-pressed="false">Groceries</button>
+                        <button type="button" class="till__cat till__cat--drink" data-cat="drink" aria-pressed="false">Drinks</button>
                     </div>
-                    <div class="till__grid">
-                        <div class="till__card"><span class="till__name">Bread loaf</span><span class="till__stock">Stock 48</span><span class="till__foot"><span class="till__price">$1.20</span><span class="till__step"><span>−</span><span class="till__qty">2</span><span>+</span></span></span></div>
-                        <div class="till__card"><span class="till__name">Cooking oil 2L</span><span class="till__stock">Stock 16</span><span class="till__foot"><span class="till__price">$4.50</span><span class="till__step"><span>−</span><span class="till__qty">1</span><span>+</span></span></span></div>
-                        <div class="till__card"><span class="till__name">Sugar 2kg</span><span class="till__stock">Stock 30</span><span class="till__foot"><span class="till__price">$2.80</span><span class="till__step"><span>−</span><span class="till__qty">0</span><span>+</span></span></span></div>
-                        <div class="till__card"><span class="till__name">Soft drink 500ml</span><span class="till__stock">Stock 120</span><span class="till__foot"><span class="till__price">$0.80</span><span class="till__step"><span>−</span><span class="till__qty">3</span><span>+</span></span></span></div>
+                    <div class="till__grid" data-till-grid>
+                        <div class="till__card"><span class="till__name">Bread loaf</span><span class="till__stock">Stock 46</span><span class="till__foot"><span class="till__price">$1.20</span><span class="till__step"><span class="till__btn">−</span><span class="till__qty">2</span><span class="till__btn">+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Cooking oil 2L</span><span class="till__stock">Stock 15</span><span class="till__foot"><span class="till__price">$4.50</span><span class="till__step"><span class="till__btn">−</span><span class="till__qty">1</span><span class="till__btn">+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Sugar 2kg</span><span class="till__stock">Stock 4</span><span class="till__foot"><span class="till__price">$2.80</span><span class="till__step"><span class="till__btn">−</span><span class="till__qty">0</span><span class="till__btn">+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Soft drink 500ml</span><span class="till__stock">Stock 117</span><span class="till__foot"><span class="till__price">$0.80</span><span class="till__step"><span class="till__btn">−</span><span class="till__qty">3</span><span class="till__btn">+</span></span></span></div>
                     </div>
                 </div>
-                <div class="till__order" aria-hidden="true">
-                    <div class="till__currency"><span class="is-on">USD</span><span>ZWG</span></div>
-                    <div class="till__line"><span>Bread loaf</span><span class="till__x">×2</span><span class="till__amt">$2.40</span></div>
-                    <div class="till__line"><span>Cooking oil 2L</span><span class="till__x">×1</span><span class="till__amt">$4.50</span></div>
-                    <div class="till__line"><span>Soft drink 500ml</span><span class="till__x">×3</span><span class="till__amt">$2.40</span></div>
-                    <div class="till__total"><span>Total</span><span class="till__amt">$9.30</span></div>
-                    <span class="till__pay">Print / Submit</span>
+                <div class="till__order">
+                    <div class="till__currency" aria-hidden="true"><span class="is-on">USD</span><span>ZWG</span></div>
+                    <div class="till__lines" data-till-lines aria-label="Cart">
+                        <div class="till__line"><span>Bread loaf</span><span class="till__x">×2</span><span class="till__amt">$2.40</span></div>
+                        <div class="till__line"><span>Cooking oil 2L</span><span class="till__x">×1</span><span class="till__amt">$4.50</span></div>
+                        <div class="till__line"><span>Soft drink 500ml</span><span class="till__x">×3</span><span class="till__amt">$2.40</span></div>
+                    </div>
+                    <div class="till__total"><span>Total</span><span class="till__amt" data-till-total>$9.30</span></div>
+                    <button type="button" class="till__pay" data-till-pay>Print / Submit</button>
+                    <div class="till__done" data-till-done hidden>
+                        <span class="till__done-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                        <p class="till__done-title">Sale complete</p>
+                        <p class="till__done-amt" data-till-done-amt>$0.00</p>
+                        <dl class="till__done-meta">
+                            <div><dt>Items</dt><dd data-till-done-items>0</dd></div>
+                            <div><dt>Paid</dt><dd>Cash, USD</dd></div>
+                            <div><dt>Receipt</dt><dd data-till-done-no>DEMO-0001</dd></div>
+                        </dl>
+                        <button type="button" class="till__done-new" data-till-new>New sale</button>
+                    </div>
                 </div>
-            </figure>
+                <p class="sr-only" data-till-status role="status" aria-live="polite"></p>
+            </section>
 
             <section class="signin glass" aria-labelledby="signin-title">
                 <h2 id="signin-title">Welcome back</h2>
@@ -292,6 +308,146 @@ if (isset($error_message)) {
             btn.disabled = false;
             if (label) label.textContent = 'Sign in';
         });
+    })();
+
+    // Demo till: works in the browser only (sample items, nothing sent or saved).
+    (function () {
+        var root = document.querySelector('[data-till]');
+        if (!root) return;
+        var grid = root.querySelector('[data-till-grid]');
+        var lines = root.querySelector('[data-till-lines]');
+        var totalEl = root.querySelector('[data-till-total]');
+        var payBtn = root.querySelector('[data-till-pay]');
+        var status = root.querySelector('[data-till-status]');
+        var NOTE = ''; // status is announced to screen readers only; nothing shows on screen
+        var LOW = 5;
+        // Starting state matches the static markup: stock already reflects what is in the cart.
+        var items = [
+            { id: 'bread', name: 'Bread loaf', cat: 'groc', price: 1.20, stock: 46, qty: 2 },
+            { id: 'oil', name: 'Cooking oil 2L', cat: 'groc', price: 4.50, stock: 15, qty: 1 },
+            { id: 'sugar', name: 'Sugar 2kg', cat: 'groc', price: 2.80, stock: 4, qty: 0 },
+            { id: 'soda', name: 'Soft drink 500ml', cat: 'drink', price: 0.80, stock: 117, qty: 3 }
+        ];
+        var order = ['bread', 'oil', 'soda']; // cart line order = order items were added
+        var cat = 'all';
+        var statusTimer = null;
+        var money = function (n) { return '$' + n.toFixed(2); };
+        var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+        var byId = function (id) { for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i]; return null; };
+
+        function say(msg, keep) {
+            status.textContent = msg;
+            status.classList.toggle('is-news', msg !== NOTE);
+            clearTimeout(statusTimer);
+            if (!keep) statusTimer = setTimeout(function () { say(NOTE, true); }, 3200);
+        }
+
+        function stockText(it) {
+            if (it.stock === 0) return 'Out of stock';
+            return (it.stock <= LOW ? 'Low stock ' : 'Stock ') + it.stock;
+        }
+
+        function renderGrid() {
+            var html = '';
+            items.forEach(function (it) {
+                if (cat !== 'all' && it.cat !== cat) return;
+                html += '<div class="till__card' + (it.qty > 0 ? ' is-in-cart' : '') + '" data-id="' + it.id + '">'
+                    + '<span class="till__name">' + esc(it.name) + '</span>'
+                    + '<span class="till__stock' + (it.stock <= LOW ? ' is-low' : '') + '">' + stockText(it) + '</span>'
+                    + '<span class="till__foot"><span class="till__price">' + money(it.price) + '</span>'
+                    + '<span class="till__step">'
+                    + '<button type="button" class="till__btn" data-act="dec" aria-label="Remove one ' + esc(it.name) + '"' + (it.qty === 0 ? ' disabled' : '') + '>−</button>'
+                    + '<span class="till__qty">' + it.qty + '</span>'
+                    + '<button type="button" class="till__btn" data-act="inc" aria-label="Add one ' + esc(it.name) + '"' + (it.stock === 0 ? ' disabled' : '') + '>+</button>'
+                    + '</span></span></div>';
+            });
+            grid.innerHTML = html;
+        }
+
+        function renderCart(changedId) {
+            var total = 0, html = '';
+            order.forEach(function (id) {
+                var it = byId(id);
+                if (!it || it.qty === 0) return;
+                total += it.qty * it.price;
+                html += '<div class="till__line' + (id === changedId ? ' is-changed' : '') + '"><span>' + esc(it.name) + '</span>'
+                    + '<span class="till__x">×' + it.qty + '</span><span class="till__amt">' + money(it.qty * it.price) + '</span></div>';
+            });
+            lines.innerHTML = html || '<p class="till__empty">Tap + on an item to start a sale.</p>';
+            totalEl.textContent = money(total);
+            payBtn.disabled = total === 0;
+        }
+
+        function render(changedId) { renderGrid(); renderCart(changedId); }
+
+        grid.addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-act]');
+            if (!b || b.disabled) return;
+            var it = byId(b.closest('[data-id]').getAttribute('data-id'));
+            if (b.getAttribute('data-act') === 'inc') {
+                if (it.stock === 0) return;
+                it.stock--; it.qty++;
+                if (order.indexOf(it.id) < 0) order.push(it.id);
+                if (it.stock === 0) say(it.name + ' is now out of stock.');
+                else if (it.stock === LOW) say(it.name + ' is running low.');
+            } else {
+                if (it.qty === 0) return;
+                it.qty--; it.stock++;
+                if (it.qty === 0) order = order.filter(function (id) { return id !== it.id; });
+            }
+            var act = b.getAttribute('data-act');
+            render(it.id);
+            var again = grid.querySelector('[data-id="' + it.id + '"] button[data-act="' + act + '"]');
+            if (again && !again.disabled) again.focus(); else { var other = grid.querySelector('[data-id="' + it.id + '"] button:not([disabled])'); if (other) other.focus(); }
+        });
+
+        root.querySelectorAll('[data-cat]').forEach(function (t) {
+            t.addEventListener('click', function () {
+                cat = t.getAttribute('data-cat');
+                root.querySelectorAll('[data-cat]').forEach(function (x) {
+                    var on = x === t;
+                    x.classList.toggle('is-on', on);
+                    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+                });
+                renderGrid();
+            });
+        });
+
+        var done = root.querySelector('[data-till-done]');
+        var newBtn = root.querySelector('[data-till-new]');
+        var receiptNo = 0;
+        var doneTimer = null;
+        function closeDone() {
+            clearTimeout(doneTimer);
+            if (done.hidden) return;
+            var hadFocus = done.contains(document.activeElement);
+            done.hidden = true;
+            if (hadFocus) { // the cart is empty, so start the next sale from the first + button
+                var next = grid.querySelector('button[data-act="inc"]:not([disabled])');
+                if (next) next.focus();
+            }
+        }
+        payBtn.addEventListener('click', function () {
+            var sold = 0, count = 0;
+            items.forEach(function (it) { sold += it.qty * it.price; count += it.qty; it.qty = 0; });
+            if (count === 0) return;
+            order = [];
+            render();
+            receiptNo++;
+            root.querySelector('[data-till-done-amt]').textContent = money(sold);
+            root.querySelector('[data-till-done-items]').textContent = String(count);
+            root.querySelector('[data-till-done-no]').textContent = 'DEMO-' + String(receiptNo).padStart(4, '0');
+            done.hidden = false;
+            newBtn.focus();
+            say('Demo sale of ' + money(sold) + ' done. Sign in to ring up real sales.');
+            clearTimeout(doneTimer);
+            doneTimer = setTimeout(closeDone, 6000);
+        });
+        newBtn.addEventListener('click', closeDone);
+        done.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDone(); });
+
+        render();
+        say(NOTE, true);
     })();
 
     // Login modals: native <dialog> (focus trap, Esc to close) plus a click on the backdrop to close.
