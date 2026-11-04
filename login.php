@@ -124,51 +124,103 @@ psCsrfToken();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login</title>
+    <title>Sign in · Pockets</title>
     <?php require_once __DIR__ . '/includes/ps_layout.php'; ps_head(); echo psCsrfMeta(); ?>
+    <meta name="theme-color" content="#14161d">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@400;500;600&family=Wix+Madefor+Text:wght@400;500;600&display=swap" rel="stylesheet">
+    <?php $psDuskCss = __DIR__ . '/assets/login/dusk.css'; ?>
+    <link rel="stylesheet" href="assets/login/dusk.css?v=<?php echo rawurlencode(is_file($psDuskCss) ? (string)filemtime($psDuskCss) : '1'); ?>">
 </head>
-<body class="ps-login">
-    <div class="ps-login-split">
-        <section class="ps-login-hero" aria-label="Pockets ICT Solutions">
-            <img class="ps-login-logo" src="assets/pockets-logo.png" alt="Pockets ICT Solutions">
-            <h1>Hello<br>Pockets!</h1>
-            <p>Ring up sales, track stock, and keep every receipt in one point of sale.</p>
-            <p class="ps-login-copy">Pockets ICT Solutions</p>
-        </section>
-        <section class="ps-login-panel">
-            <div class="ps-login-tools"><?php ps_theme_switch(); ?></div>
-            <div class="ps-login-card">
-                <div class="ps-login-wordmark">
-                    <img src="assets/pockets-logo.png" alt="">
-                    <span>Pockets ICT Solutions</span>
-                </div>
-                <h2>Welcome back</h2>
-                <form method="post" action="">
-                    <?php echo psCsrfField(); ?>
-                    <label class="ps-login-field">
-                        <span>Email</span>
-                        <input type="text" name="email" placeholder="Email or username" required autocomplete="username">
-                    </label>
-                    <label class="ps-login-field">
-                        <span>Password</span>
-                        <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
-                    </label>
-                    <input type="submit" value="Login Now">
-                </form>
 <?php
+// Hallmark Dusk login (2026-11-04): markup and styles only; auth, CSRF, session and throttle logic above are unchanged.
+$psLoginNotices = [];
 if (isset($_GET['suspended'])) {
-    echo '<div class="error">This company account is suspended. Contact ' . htmlspecialchars(PS_PLATFORM_PROVIDER_NAME) . '.</div>';
+    $psLoginNotices[] = 'This company account is suspended. Contact ' . PS_PLATFORM_PROVIDER_NAME . '.';
 }
 if (isset($_GET['expired'])) {
-    echo '<div class="error">Your session expired due to inactivity. Please log in again.</div>';
+    $psLoginNotices[] = 'Your session expired due to inactivity. Please log in again.';
+}
+if (isset($error_message)) {
+    $psLoginNotices[] = (string)$error_message;
 }
 ?>
-                <?php if (isset($error_message)): ?>
-                    <div class="error"><?php echo htmlspecialchars($error_message); ?></div>
-                <?php endif; ?>
+<body class="hm-dusk">
+    <div class="dusk">
+        <figure class="dusk__photo" aria-hidden="true">
+            <img src="assets/login/dusk-valley.jpg" alt="" width="1920" height="1254" decoding="async" fetchpriority="high">
+        </figure>
+        <div class="dusk__scrim" aria-hidden="true"></div>
+
+        <header class="dusk__bar">
+            <div class="dusk__wrap">
+                <span class="dusk__brand">Pockets ICT Solutions</span>
+                <?php ps_theme_switch(); ?>
             </div>
-        </section>
+        </header>
+
+        <main class="dusk__wrap dusk__stage">
+            <section class="dusk__head" aria-labelledby="dusk-title">
+                <img class="dusk__logo" src="assets/login/pockets-wordmark.png" alt="Pockets ICT Solutions" width="786" height="345">
+                <h1 id="dusk-title">Hello Pockets!</h1>
+                <p>Ring up sales, track stock, and keep every receipt in one point of sale.</p>
+            </section>
+
+            <section class="signin glass" aria-labelledby="signin-title">
+                <h2 id="signin-title">Welcome back</h2>
+                <p class="signin__lead">Sign in with your email or username.</p>
+
+                <?php foreach ($psLoginNotices as $psNotice): ?>
+                <div class="notice" role="alert">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2v.3"/></svg>
+                    <span><?php echo htmlspecialchars($psNotice); ?></span>
+                </div>
+                <?php endforeach; ?>
+
+                <form method="post" action="" data-dusk-signin>
+                    <?php echo psCsrfField(); ?>
+                    <label class="field">
+                        <span class="field__label">Email or username</span>
+                        <input type="text" name="email" placeholder="you@company.com" required autocomplete="username" autocapitalize="none" spellcheck="false" value="<?php echo htmlspecialchars((string)($_POST['email'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>"<?php echo isset($_POST['email']) ? '' : ' autofocus'; ?>>
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Password</span>
+                        <input type="password" name="password" placeholder="Password" required autocomplete="current-password"<?php echo isset($_POST['email']) ? ' autofocus' : ''; ?>>
+                    </label>
+                    <button type="submit" class="btn">
+                        <span class="btn__spinner" aria-hidden="true"></span>
+                        <span class="btn__text">Sign in</span>
+                    </button>
+                </form>
+            </section>
+        </main>
+
+        <footer class="dusk__wrap dusk__foot">
+            <span>Pockets ICT Solutions</span>
+            <span>Photo: <a href="https://commons.wikimedia.org/wiki/File:Vallee-brouillard.jpg" target="_blank" rel="noopener">Thomas Bresson</a>, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a></span>
+        </footer>
     </div>
     <?php ps_scripts(); ?>
+    <script>
+    (function () {
+        var form = document.querySelector('[data-dusk-signin]');
+        if (!form) return;
+        var btn = form.querySelector('button[type="submit"]');
+        var label = btn && btn.querySelector('.btn__text');
+        form.addEventListener('submit', function () {
+            if (!btn) return;
+            btn.setAttribute('aria-busy', 'true');
+            btn.disabled = true;
+            if (label) label.textContent = 'Signing in';
+        });
+        window.addEventListener('pageshow', function () {
+            if (!btn) return;
+            btn.removeAttribute('aria-busy');
+            btn.disabled = false;
+            if (label) label.textContent = 'Sign in';
+        });
+    })();
+    </script>
 </body>
 </html>
