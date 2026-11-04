@@ -153,7 +153,6 @@ html[data-theme] body.ps-app table.ps-table th {
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
-  white-space: nowrap;
 }
 html[data-theme] body.ps-app th a {
   color: inherit;
@@ -302,7 +301,11 @@ html[data-theme] body.ps-app .new-stock-button,
 html[data-theme] body.ps-app .search-button,
 html[data-theme] body.ps-app .backup-button,
 html[data-theme] body.ps-app .template-button,
-html[data-theme] body.ps-app .btn-primary {
+html[data-theme] body.ps-app .btn-primary,
+html[data-theme] body.ps-app a.template-button,
+html[data-theme] body.ps-app a.print-button,
+html[data-theme] body.ps-app a.new-order-button,
+html[data-theme] body.ps-app a.export-button {
   color: var(--ps-blue-ink);
 }
 html[data-theme] body.ps-app .export-button:hover,
@@ -780,6 +783,19 @@ html[data-theme] body.ps-app.ps-app .str-neg { color: var(--ps-danger); }
 html[data-theme] body.ps-app.ps-app .str-pos { color: var(--ps-green); }
 /* Packs: warning text was raw yellow (unreadable on white) */
 html[data-theme] body.ps-app.ps-app .pk-warn { color: var(--ps-warn); }
+/* Code/log boxes with an inline light-grey background were unreadable in dark mode (e.g. Backup & Recovery) */
+html[data-theme] body.ps-app pre[style*="background"] {
+  background: var(--ps-card-2) !important;
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+}
+/* Till: "till open N days" warning; ajax_pos.php's JS sets a fixed dark orange inline, hence !important */
+html[data-theme] body.ps-pos.ps-pos .till-stale-warning {
+  background: color-mix(in oklab, var(--ps-warn) 12%, transparent) !important;
+  border: 1px solid color-mix(in oklab, var(--ps-warn) 35%, transparent) !important;
+  color: var(--ps-warn) !important;
+}
 /* Quotation item search dropdown */
 html[data-theme] body.ps-app.ps-app .q-results {
   border-color: var(--ps-line);
