@@ -180,7 +180,7 @@ mysqli_close($conn);
                         <td><?php echo (int)$j['id']; ?></td>
                         <td><?php echo htmlspecialchars((string)$j['started_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$j['status'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$j['filename'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="ps-wrap-anywhere"><?php echo htmlspecialchars((string)$j['filename'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo number_format((int)$j['file_size']); ?></td>
                         <td><?php echo (int)$j['table_count']; ?></td>
                         <td><?php echo htmlspecialchars((string)$j['source'], ENT_QUOTES, 'UTF-8'); ?></td>

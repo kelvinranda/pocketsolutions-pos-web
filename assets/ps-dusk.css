@@ -44,6 +44,13 @@ html[data-theme="dark"] {
   --ps-danger-ink: oklch(19% 0.035 22);
   --ps-warn: oklch(83% 0.095 62);
   --ps-focus: oklch(80% 0.10 274);
+
+  /* phase 2 roles */
+  --ps-line-strong: oklch(38% 0.016 266);
+  --ps-yellow-hi: oklch(85% 0.15 82);
+  --ps-yellow-text: oklch(84% 0.15 82);
+  --ps-yellow-soft: oklch(80.5% 0.165 80 / 0.16);
+  --ps-radius-card: 14px; --ps-radius-control: 10px; --ps-radius-pill: 999px;
 }
 
 /* ---------- Light: neutral white surfaces (bone wells dropped at the owner's request) ---------- */
@@ -75,6 +82,13 @@ html[data-theme="light"] {
   --ps-danger-ink: oklch(98.5% 0.005 25);
   --ps-warn: oklch(50% 0.12 55);
   --ps-focus: oklch(44% 0.13 274);
+
+  /* phase 2 roles */
+  --ps-line-strong: oklch(80% 0.008 268);
+  --ps-yellow-hi: oklch(84% 0.16 82);
+  --ps-yellow-text: oklch(52% 0.115 70);
+  --ps-yellow-soft: oklch(80.5% 0.165 80 / 0.22);
+  --ps-radius-card: 14px; --ps-radius-control: 10px; --ps-radius-pill: 999px;
 }
 
 /* ---------- Typography: Wix Madefor Text for UI, Display for heads ---------- */
@@ -86,6 +100,7 @@ html[data-theme] body:is(.ps-app, .ps-pos) :is(h1, h2, h3) {
   font-family: var(--ps-font-display) !important;
   font-weight: 500;
   letter-spacing: -0.015em;
+  text-wrap: balance;
 }
 html[data-theme] body:is(.ps-app, .ps-pos) {
   font-feature-settings: "tnum" 1;
@@ -112,4 +127,424 @@ html[data-theme] body.ps-app .ps-btn.reject,
 html[data-theme] body.ps-app button.reject:not(.ps-btn),
 html[data-theme] body.ps-app button.delete-row:hover {
   color: var(--ps-danger-ink);
+}
+
+/* =====================================================================
+ * Phase 2: shared components (tables, buttons, fields, surfaces, nav,
+ * status). Same selectors as ps-theme.css, loaded later, so these win
+ * without !important. One radius per level: 14px surfaces, 10px controls.
+ * ===================================================================== */
+
+/* ---------- Tables ---------- */
+html[data-theme] body.ps-app table {
+  border-radius: var(--ps-radius-card);
+  box-shadow: none;
+}
+html[data-theme] body.ps-app th,
+html[data-theme] body.ps-app td {
+  padding: 12px 16px;
+}
+html[data-theme] body.ps-app th,
+html[data-theme] body.ps-app .ps-table-wrap th,
+html[data-theme] body.ps-app table.ps-table th {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+html[data-theme] body.ps-app th a {
+  color: inherit;
+  text-decoration: none;
+  border-radius: 4px;
+}
+html[data-theme] body.ps-app th a:hover { color: var(--ps-text); }
+html[data-theme] body.ps-app th a:focus-visible { outline: 2px solid var(--ps-focus); outline-offset: 2px; }
+html[data-theme] body.ps-app td { font-variant-numeric: tabular-nums; }
+html[data-theme] body.ps-app tbody tr:hover td { background: var(--ps-row); }
+
+/* ---------- Row actions: compact outline buttons in one line; destructive ones in red ----------
+ * Buttons inside table cells were full-size yellow and stacked (e.g. Backup & Recovery:
+ * Download / Restore test / Delete). Classed buttons (.ps-btn, .process, .reject...) keep their own look. */
+html[data-theme] body.ps-app td.actions,
+html[data-theme] body.ps-app td:has(> form + form) {
+  display: table-cell; /* ps-theme's generic .actions made the cell a wrapping flex box */
+  white-space: nowrap;
+}
+/* !important on width only: ps-theme sets "td form { width: 100% }" through several container selectors */
+html[data-theme] body.ps-app td.actions > form,
+html[data-theme] body.ps-app td:has(> form + form) > form {
+  display: inline-flex;
+  width: auto !important;
+  margin: 2px 4px 2px 0;
+  vertical-align: middle;
+}
+/* Long unbroken values (file names, references) may wrap so row actions stay on one line */
+html[data-theme] body.ps-app td.ps-wrap-anywhere {
+  overflow-wrap: anywhere;
+  min-width: 8rem;
+}
+html[data-theme] body.ps-app td :is(button, input[type="submit"], input[type="button"]):not([class]) {
+  height: 32px;
+  min-height: 32px;
+  width: auto;
+  padding: 0 12px;
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  background: var(--ps-card);
+  color: var(--ps-text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+html[data-theme] body.ps-app td :is(button, input[type="submit"], input[type="button"]):not([class]):hover {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line-strong);
+}
+html[data-theme] body.ps-app td :is(button, input[type="submit"]):not([class]):is([name*="delete"], [name*="void"], [name*="reject"], [name*="remove"], [name*="cancel"]) {
+  color: var(--ps-danger);
+  border-color: color-mix(in oklab, var(--ps-danger) 35%, var(--ps-line));
+}
+html[data-theme] body.ps-app td :is(button, input[type="submit"]):not([class]):is([name*="delete"], [name*="void"], [name*="reject"], [name*="remove"], [name*="cancel"]):hover {
+  background: color-mix(in oklab, var(--ps-danger) 10%, var(--ps-card));
+  border-color: var(--ps-danger);
+}
+
+/* ---------- Links ---------- */
+html[data-theme] body.ps-app a { text-underline-offset: 3px; }
+html[data-theme] body.ps-app a:focus-visible { outline: 2px solid var(--ps-focus); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- Buttons: primary (yellow) ---------- */
+html[data-theme] body.ps-app button,
+html[data-theme] body.ps-app input[type="submit"],
+html[data-theme] body.ps-app input[type="button"],
+html[data-theme] body.ps-app .ps-btn,
+html[data-theme] body.ps-app a.ps-btn {
+  border-radius: var(--ps-radius-control);
+  min-height: 40px;
+  font-weight: 600;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+html[data-theme] body.ps-app .ps-btn,
+html[data-theme] body.ps-app a.ps-btn { height: 40px; }
+html[data-theme] body.ps-app button:hover,
+html[data-theme] body.ps-app input[type="submit"]:hover,
+html[data-theme] body.ps-app input[type="button"]:hover,
+html[data-theme] body.ps-app a.back-button:hover,
+html[data-theme] body.ps-app a.template-button:hover,
+html[data-theme] body.ps-app .ps-btn-default:hover,
+html[data-theme] body.ps-app .ps-btn-destructive:hover {
+  filter: none;
+}
+html[data-theme] body.ps-app input[type="submit"]:not([class]):hover,
+html[data-theme] body.ps-app button:not([class]):hover,
+html[data-theme] body.ps-app .ps-btn-default:hover {
+  background: var(--ps-yellow-hi);
+}
+html[data-theme] body.ps-app button:active:not(:disabled),
+html[data-theme] body.ps-app input[type="submit"]:active,
+html[data-theme] body.ps-app .ps-btn:active:not(:disabled) { transform: translateY(1px); }
+html[data-theme] body.ps-app button:focus-visible,
+html[data-theme] body.ps-app input[type="submit"]:focus-visible,
+html[data-theme] body.ps-app input[type="button"]:focus-visible,
+html[data-theme] body.ps-app .ps-btn:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 2px;
+  transition: none;
+}
+html[data-theme] body.ps-app button:disabled,
+html[data-theme] body.ps-app input[type="submit"]:disabled,
+html[data-theme] body.ps-app .ps-btn:disabled,
+html[data-theme] body.ps-app .ps-btn[aria-disabled="true"] {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  border-color: var(--ps-line);
+  opacity: 1;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ---------- Buttons: secondary / outline / ghost ---------- */
+html[data-theme] body.ps-app .back-button,
+html[data-theme] body.ps-app .btn-secondary,
+html[data-theme] body.ps-app #btnCancel,
+html[data-theme] body.ps-app .ps-btn-secondary,
+html[data-theme] body.ps-app .ps-btn-outline,
+html[data-theme] body.ps-app a.ps-btn-outline,
+html[data-theme] body.ps-app .ps-btn.ps-btn-outline {
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+}
+html[data-theme] body.ps-app .back-button:hover,
+html[data-theme] body.ps-app .btn-secondary:hover,
+html[data-theme] body.ps-app #btnCancel:hover,
+html[data-theme] body.ps-app .ps-btn-secondary:hover,
+html[data-theme] body.ps-app .ps-btn-outline:hover,
+html[data-theme] body.ps-app a.ps-btn-outline:hover,
+html[data-theme] body.ps-app .ps-btn.ps-btn-outline:hover {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line-strong);
+}
+html[data-theme] body.ps-app .ps-btn-ghost:hover { background: var(--ps-card-2); }
+
+/* ---------- Buttons: periwinkle (the old blue set) ---------- */
+html[data-theme] body.ps-app .export-button,
+html[data-theme] body.ps-app .print-button,
+html[data-theme] body.ps-app .new-order-button,
+html[data-theme] body.ps-app .create-button,
+html[data-theme] body.ps-app .info-button,
+html[data-theme] body.ps-app .load-all-button,
+html[data-theme] body.ps-app .new-expense-button,
+html[data-theme] body.ps-app .new-stock-button,
+html[data-theme] body.ps-app .search-button,
+html[data-theme] body.ps-app .backup-button,
+html[data-theme] body.ps-app .template-button,
+html[data-theme] body.ps-app .btn-primary {
+  color: var(--ps-blue-ink);
+}
+html[data-theme] body.ps-app .export-button:hover,
+html[data-theme] body.ps-app .print-button:hover,
+html[data-theme] body.ps-app .new-order-button:hover,
+html[data-theme] body.ps-app .create-button:hover,
+html[data-theme] body.ps-app .search-button:hover,
+html[data-theme] body.ps-app .btn-primary:hover,
+html[data-theme] body.ps-app #btnSave:hover,
+html[data-theme] body.ps-app .ps-btn-primary:hover,
+html[data-theme] body.ps-app .ps-btn.process:hover {
+  background: color-mix(in oklab, var(--ps-blue) 88%, var(--ps-text));
+}
+
+/* ---------- Buttons: destructive ---------- */
+html[data-theme] body.ps-app .ps-btn-destructive,
+html[data-theme] body.ps-app button.reject.ps-btn,
+html[data-theme] body.ps-app .new-install-button {
+  color: var(--ps-danger-ink);
+}
+html[data-theme] body.ps-app .ps-btn-destructive:hover,
+html[data-theme] body.ps-app .ps-btn.reject:hover,
+html[data-theme] body.ps-app #logout-button:hover {
+  background: color-mix(in oklab, var(--ps-danger) 88%, var(--ps-text));
+}
+
+/* ---------- Fields ---------- */
+html[data-theme] body.ps-app input[type="text"],
+html[data-theme] body.ps-app input[type="password"],
+html[data-theme] body.ps-app input[type="number"],
+html[data-theme] body.ps-app input[type="date"],
+html[data-theme] body.ps-app input[type="email"],
+html[data-theme] body.ps-app input[type="search"],
+html[data-theme] body.ps-app input[type="file"],
+html[data-theme] body.ps-app select,
+html[data-theme] body.ps-app textarea,
+html[data-theme] body.ps-app .ps-select-trigger {
+  border-radius: var(--ps-radius-control);
+  min-height: 40px;
+  font-weight: 400;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+html[data-theme] body.ps-app input:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):hover,
+html[data-theme] body.ps-app select:hover,
+html[data-theme] body.ps-app textarea:hover,
+html[data-theme] body.ps-app .ps-select-trigger:hover {
+  border-color: var(--ps-line-strong);
+}
+html[data-theme] body.ps-app input:focus,
+html[data-theme] body.ps-app select:focus,
+html[data-theme] body.ps-app textarea:focus,
+html[data-theme] body.ps-app .ps-select-trigger:focus,
+html[data-theme] body.ps-app .ps-select-trigger:focus-visible,
+html[data-theme] body.ps-app .ps-select.is-open .ps-select-trigger,
+html[data-theme] body.ps-app .ps-input:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack input:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack select:focus-visible,
+html[data-theme] body.ps-app .ps-form-stack textarea:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 1px;
+  border-color: var(--ps-focus);
+}
+html[data-theme] body.ps-app input:disabled,
+html[data-theme] body.ps-app select:disabled,
+html[data-theme] body.ps-app textarea:disabled {
+  background: var(--ps-card-2);
+  color: var(--ps-muted);
+  cursor: not-allowed;
+}
+/* Checkboxes and radios: one 18px size everywhere. ps-theme.css "td input" (width 100%, min 72x36)
+ * was stretching the ones inside table cells, e.g. Role Permissions. */
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="checkbox"],
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  accent-color: var(--ps-yellow);
+  cursor: pointer;
+}
+/* Role Permissions keeps its big tick boxes (owner's request). */
+html[data-theme] body.ps-app .rp-table input[type="checkbox"] {
+  width: 34px;
+  height: 34px;
+}
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="checkbox"]:focus-visible,
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="radio"]:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 2px;
+}
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="checkbox"]:disabled,
+html[data-theme] body:is(.ps-app, .ps-pos) input[type="radio"]:disabled { cursor: not-allowed; opacity: 0.55; }
+
+/* ---------- Surfaces: cards, panels, modals ---------- */
+html[data-theme] body.ps-app .ps-card,
+html[data-theme] body.ps-app .ps-panel {
+  border-radius: var(--ps-radius-card);
+  box-shadow: none;
+}
+html[data-theme] body.ps-app .modal,
+html[data-theme] body.ps-app .ps-dialog {
+  border-radius: calc(var(--ps-radius-card) + 2px);
+  box-shadow: var(--ps-shadow);
+}
+
+/* ---------- Sidebar ---------- */
+html[data-theme] body.ps-app .ps-nav-group,
+html[data-theme] body.ps-app .ps-nav-group span,
+html[data-theme] body.ps-app .ps-nav button.ps-nav-group,
+html[data-theme] body.ps-pos .kicker {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ps-text);
+}
+html[data-theme] body.ps-app .ps-nav a {
+  border-radius: var(--ps-radius-control);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+html[data-theme] body.ps-app .ps-nav a:hover { background: var(--ps-row); color: var(--ps-text); }
+html[data-theme] body.ps-app .ps-nav a.is-on {
+  background: var(--ps-yellow-soft);
+  color: var(--ps-text);
+  font-weight: 600;
+}
+html[data-theme] body.ps-app .ps-nav a.is-on svg { color: var(--ps-yellow-text); }
+html[data-theme] body.ps-app .ps-nav a:focus-visible,
+html[data-theme] body.ps-app .ps-nav-group:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 1px;
+}
+
+/* ---------- Light/Dark switch: one size on every page (app, till; login matches in login/dusk.css) ---------- */
+html[data-theme] body:is(.ps-app, .ps-pos) .ps-theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-pill);
+  background: var(--ps-card);
+}
+html[data-theme] body:is(.ps-app, .ps-pos) .ps-theme-switch button {
+  height: 32px;
+  min-height: 32px;
+  width: auto;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ps-radius-pill);
+  background: transparent;
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  transform: none;
+}
+html[data-theme] body:is(.ps-app, .ps-pos) .ps-theme-switch button:hover:not(.is-on) {
+  background: var(--ps-row);
+  color: var(--ps-text);
+}
+html[data-theme] body:is(.ps-app, .ps-pos) .ps-theme-switch button.is-on {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+}
+
+/* ---------- Tabs ---------- */
+html[data-theme] body.ps-app .tabs a.on,
+html[data-theme] body.ps-app .cm-tabs label:has(input:checked) {
+  font-weight: 600;
+}
+
+/* ---------- Status: badges, alerts, labels ---------- */
+html[data-theme] body.ps-app .ps-badge { font-weight: 500; }
+html[data-theme] body.ps-app .ps-badge-success,
+html[data-theme] body.ps-app .ps-badge-BALANCED,
+html[data-theme] body.ps-app .ps-badge-PROCESSED {
+  background: color-mix(in oklab, var(--ps-green) 15%, transparent);
+  color: var(--ps-green);
+}
+html[data-theme] body.ps-app .ps-badge-destructive,
+html[data-theme] body.ps-app .ps-badge-SHORTAGE,
+html[data-theme] body.ps-app .ps-badge-REJECTED {
+  background: color-mix(in oklab, var(--ps-danger) 15%, transparent);
+  color: var(--ps-danger);
+}
+html[data-theme] body.ps-app .ps-badge-warning {
+  background: color-mix(in oklab, var(--ps-warn) 16%, transparent);
+  color: var(--ps-warn);
+}
+html[data-theme] body.ps-app .ps-badge-info {
+  background: color-mix(in oklab, var(--ps-blue) 16%, transparent);
+  color: var(--ps-blue);
+}
+html[data-theme] body.ps-app .error:not(:empty),
+html[data-theme] body.ps-app .alert:not(:empty) {
+  background: color-mix(in oklab, var(--ps-danger) 10%, transparent);
+  border-color: color-mix(in oklab, var(--ps-danger) 32%, transparent);
+  border-radius: var(--ps-radius-control);
+}
+html[data-theme] body.ps-app .success:not(:empty) {
+  background: color-mix(in oklab, var(--ps-green) 12%, transparent);
+}
+html[data-theme] body.ps-app .ps-kpi-label {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ---------- Brand mark: the white logo tile needs an edge on white ---------- */
+.ps-mark { box-shadow: inset 0 0 0 1px var(--ps-line); }
+
+/* ---------- Till (body.ps-pos) ---------- */
+html[data-theme] body.ps-pos .step button,
+html[data-theme] body.ps-pos .vchoose {
+  color: var(--ps-yellow-text);
+}
+html[data-theme] body.ps-pos .step .qtybtn { color: var(--ps-text); }
+html[data-theme] body.ps-pos .step button:hover:not(.qtybtn) {
+  background: var(--ps-yellow-soft);
+  border-color: var(--ps-yellow);
+}
+html[data-theme] body.ps-pos .search:focus,
+html[data-theme] body.ps-pos input:focus,
+html[data-theme] body.ps-pos select:focus,
+html[data-theme] body.ps-pos textarea:focus {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 1px;
+  border-color: var(--ps-focus);
+}
+html[data-theme] body.ps-pos button:focus-visible {
+  outline: 2px solid var(--ps-focus);
+  outline-offset: 2px;
+}
+html[data-theme] body.ps-pos .pcard,
+html[data-theme] body.ps-pos .sheet { border-radius: var(--ps-radius-card); }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme] body:is(.ps-app, .ps-pos) * { transition-duration: 0ms !important; }
+  html[data-theme] body:is(.ps-app, .ps-pos) :is(button, .ps-btn):active { transform: none !important; }
 }
