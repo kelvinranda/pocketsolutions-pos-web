@@ -325,7 +325,6 @@ $money = static function ($v): string {
                         echo $sv === null ? '—' : $h($money($sv));
                         ?>
                     </div>
-                    <div class="ps-kpi-sub"><?php echo $h($ia['valuation_note'] ?? ''); ?></div>
                 </div>
             </div>
             <p class="ps-link-row"><a class="ps-btn ps-btn-outline ps-btn-sm" href="inventory_reports.php">Open inventory reports</a></p>
@@ -333,6 +332,10 @@ $money = static function ($v): string {
 
         <section class="ps-section">
             <h2>Cash / till</h2>
+            <?php // 2026-11-04 Dusk: valuation note moved out of the Stock value box (it stretched the row); same pattern as Cash / till. ?>
+            <?php if (trim((string)($ia['valuation_note'] ?? '')) !== ''): ?>
+                <p class="ps-page-lead"><?php echo $h($ia['valuation_note']); ?></p>
+            <?php endif; ?>
             <?php $cash = $dash['cash'] ?? null; ?>
             <?php if ($cash && !empty($cash['ok']) && is_array($cash['cards'] ?? null)): ?>
                 <?php $cc = $cash['cards']; ?>

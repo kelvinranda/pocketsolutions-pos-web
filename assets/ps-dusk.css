@@ -805,6 +805,244 @@ html[data-theme] body.ps-app.ps-app .q-results {
 html[data-theme] body.ps-app.ps-app .q-results button:hover,
 html[data-theme] body.ps-app.ps-app .q-results button:focus { background: var(--ps-row); }
 
+/* =====================================================================
+ * Consistency pass (owner review): the login's faint glow behind every
+ * page, and filter bars that line up on one baseline.
+ * ===================================================================== */
+
+/* ---------- The login's faint radial glow at the top of every page ---------- */
+html[data-theme="dark"] { --ps-glow: oklch(77% 0.10 274 / 0.10); }
+html[data-theme="light"] { --ps-glow: oklch(80.5% 0.165 80 / 0.10); }
+html[data-theme] body.ps-app,
+html[data-theme] body.ps-pos {
+  background:
+    radial-gradient(60rem 30rem at 40% 0, var(--ps-glow), transparent 70%) no-repeat fixed,
+    var(--ps-bg);
+}
+/* the shell and main column painted their own solid --ps-bg over it */
+html[data-theme] body.ps-app .ps-shell,
+html[data-theme] body.ps-app .ps-main { background: transparent; }
+/* sticky top bar as slate glass (Dusk: the nav turns to glass over content), so the glow shows through */
+html[data-theme] body.ps-app .ps-top {
+  background: color-mix(in oklab, var(--ps-top) 72%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/* ---------- Filter bars: fields, buttons and links on one bottom line ----------
+ * Pattern: <form class="audit-filters|filters|…-toolbar|filter-form"> with <div><label/><input/></div>
+ * wrappers. ps-theme centred the columns, so a button without a label floated mid-row. */
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) {
+  align-items: end;
+  column-gap: var(--ps-space-3);
+  row-gap: var(--ps-space-3);
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div {
+  align-self: end;
+  margin: 0;
+}
+/* field columns share the row (grow and shrink); button/link groups keep their natural width */
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:has(input:not([type="hidden"]), select, textarea) {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:has(input:not([type="hidden"]), select, textarea) :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, .ps-select-trigger, button, a.ps-btn) {
+  height: 40px;
+  min-height: 40px;
+  margin: 0;
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) label {
+  margin: 0 0 var(--ps-space-2);
+}
+/* a wrapper holding only buttons/links: same 40px line as the fields */
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:not(:has(input:not([type="hidden"]), select, textarea, label)) {
+  display: flex;
+  flex: 0 0 auto; /* ps-theme gave every wrapper flex: 1 1 180px, squeezing button groups */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ps-space-2);
+  min-height: 40px;
+}
+/* link groups beside a filter ("Back to receipts | New receipt"): outline buttons, text dividers hidden */
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:not(:has(input:not([type="hidden"]), select, textarea, label, button)):has(> a) {
+  font-size: 0;
+  flex-wrap: nowrap;
+  margin-left: auto;
+  justify-self: end;
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:not(:has(input:not([type="hidden"]), select, textarea, label)) > a:not(.ps-btn) {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 var(--ps-space-4);
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  background: var(--ps-card);
+  color: var(--ps-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+html[data-theme] body.ps-app.ps-app form:is(.audit-filters, .cc-filters, .filters, [class*="toolbar"], .filter-form, .search-form) > div:not(:has(input:not([type="hidden"]), select, textarea, label)) > a:not(.ps-btn):hover {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line-strong);
+}
+
+/* ---------- Filter forms without wrapper divs (GET forms: filters and searches) ----------
+ * Two more markup patterns exist besides <div><label/><input/></div>:
+ *   wrapped:  <label>From <input></label>            (e.g. Sales Reports)
+ *   loose:    <label>From</label><input> siblings     (e.g. All Receipts, Income Statement)
+ * Both get: label above field, every control on one 40px bottom line, wrapping when full.
+ * Scope: GET forms with no textarea or file input, not inside a table cell, not .ps-form-stack. */
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: var(--ps-space-3);
+  row-gap: var(--ps-space-3);
+}
+/* wrapped pattern: the label becomes a two-row stack, its text above its control */
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > label:where(:has(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, .ps-select)) {
+  display: grid;
+  gap: var(--ps-space-2);
+  flex: 1 1 8.5rem;
+  min-width: 0;
+  margin: 0;
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+/* minimum widths by field type, so dropdown values and dates stay readable */
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > label:has(.ps-select, select) { flex: 1.8 1 12.5rem; }
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > label:has(input[type="date"]) { flex-basis: 9rem; }
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > label:has(input[type="text"], input[type="search"], input[type="number"]) { flex-basis: 5.5rem; }
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > label > :is(input, select, .ps-select) {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+/* every control and action on the same 40px line */
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, .ps-select-trigger, button) {
+  height: 40px;
+  min-height: 40px;
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > :is(button, input[type="submit"], a) {
+  flex: 0 0 auto;
+  margin: 0;
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > a:not(.ps-btn) {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 var(--ps-space-4);
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  background: var(--ps-card);
+  color: var(--ps-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) > a:not(.ps-btn):hover {
+  background: var(--ps-card-2);
+  border-color: var(--ps-line-strong);
+}
+/* loose pattern: a two-row grid, labels on row 1 and their controls straight below on row 2 */
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: auto auto;
+  grid-auto-columns: minmax(0, max-content);
+  justify-content: start;
+  align-items: end;
+  column-gap: var(--ps-space-4);
+  row-gap: var(--ps-space-2);
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > label:not(:has(input, select, .ps-select)) {
+  grid-row: 1;
+  margin: 0;
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > :not(label):not([type="hidden"]) {
+  grid-row: 2;
+  min-width: 12rem;
+}
+html[data-theme] body.ps-app.ps-app form[method="get" i]:not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > :is(button, input[type="submit"], a) { min-width: 0; }
+
+/* ps-theme forces a two-column "label | field" grid (display and gap !important) on .filter-form and
+ * .ps-form-inline inside cards. For filter forms we override just those two properties, so these
+ * also get labels above and one control line. The !important matches theirs; nothing else uses it. */
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):not(:has(> label[for], > label.ps-label)) {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--ps-space-3) !important;
+}
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) {
+  display: grid !important;
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  grid-template-rows: auto auto;
+  grid-auto-columns: minmax(0, max-content);
+  justify-content: start;
+  align-items: end;
+  gap: var(--ps-space-2) var(--ps-space-3) !important;
+}
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > label:not(:has(input, select, .ps-select)) {
+  grid-row: 1;
+  grid-column: auto;
+  margin: 0;
+  color: var(--ps-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > :not(label):not([type="hidden"]) {
+  grid-row: 2;
+  grid-column: auto;
+  justify-self: stretch;
+  min-width: 12rem;
+  margin: 0;
+}
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form):has(> label[for], > label.ps-label) > :is(button, input[type="submit"], a) {
+  min-width: 0;
+  justify-self: start;
+}
+html[data-theme] body.ps-app.ps-app form:is([method="get" i], .filter-form, .ps-form-inline, .cm-filter):not(:has(textarea, input[type="file"])):not(.ps-form-stack):not(td form) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), .ps-select-trigger, button, a.ps-btn) {
+  height: 40px;
+  min-height: 40px;
+}
+
+/* custom dropdown text stays on one line (it wrapped to two inside 40px triggers) */
+html[data-theme] body.ps-app .ps-select-trigger .ps-select-value {
+  overflow: clip;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---------- KPI rows: one long note no longer stretches the whole row ----------
+ * e.g. Management Dashboard > Inventory > Stock value carries a ~70-word valuation note.
+ * Notes clamp to three lines (screen readers always get all of it). No hover expansion: it made the row jump. */
+html[data-theme] body.ps-app .ps-kpi { border-radius: var(--ps-radius-card); }
+html[data-theme] body.ps-app .ps-kpi-sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: clip;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-theme] body:is(.ps-app, .ps-pos) * { transition-duration: 0ms !important; }
   html[data-theme] body:is(.ps-app, .ps-pos) :is(button, .ps-btn):active { transform: none !important; }
