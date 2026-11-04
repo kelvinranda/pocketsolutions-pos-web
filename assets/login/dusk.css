@@ -8,12 +8,12 @@
 /* ---------- Tokens: Hallmark Dusk (references/themes/dusk.md) ---------- */
 :root {
   --color-paper: oklch(17.5% 0.014 268); --color-paper-2: oklch(21% 0.016 268); --color-paper-3: oklch(25% 0.017 268);
-  --color-ink: oklch(96% 0.006 75); --color-ink-2: oklch(85% 0.010 262); --color-muted: oklch(70% 0.016 262);
+  --color-ink: oklch(97% 0.003 268); --color-ink-2: oklch(85% 0.010 262); --color-muted: oklch(70% 0.016 262);
   --color-rule: oklch(30% 0.016 266); --color-light: oklch(100% 0 0); --color-shade: oklch(10% 0.022 268);
   --color-accent: oklch(77% 0.10 274); --color-accent-ink: oklch(19% 0.035 274); --color-accent-hi: oklch(84% 0.085 274);
   --color-accent-deep: oklch(44% 0.13 274); --color-accent-soft: oklch(91% 0.038 274); --color-focus: oklch(80% 0.10 274);
   --color-accent-2: oklch(83% 0.095 62); --color-dusk: oklch(70% 0.12 330);
-  --color-day-ink: oklch(22% 0.022 268); --color-day-muted: oklch(38% 0.022 266); --color-fog: oklch(94% 0.012 70);
+  --color-day-ink: oklch(22% 0.022 268); --color-day-muted: oklch(38% 0.022 266); --color-fog: oklch(96% 0.003 268);
   --color-well: oklch(95.5% 0.008 75); --color-well-2: oklch(92% 0.010 75); --color-well-ink: oklch(21% 0.016 268); --color-well-muted: oklch(47% 0.016 265); --color-well-rule: oklch(87.5% 0.009 75); --color-card: oklch(99.5% 0.003 75);
   --glass: oklch(22% 0.018 268 / 0.58); --glass-blur: 22px;
   --glass-hi: inset 0 1px 0 oklch(100% 0 0 / 0.10), inset 0 0 0 1px oklch(100% 0 0 / 0.06);
@@ -36,19 +36,19 @@
   color-scheme: dark;
 }
 
-/* ---------- Light: Dusk's own day surfaces (fog, bone wells, white card), same hues ---------- */
+/* ---------- Light: neutral white surfaces (no warm/bone tint, owner's request), same hues ---------- */
 html[data-theme="light"] {
-  --color-paper: oklch(95.5% 0.008 75); --color-paper-2: oklch(99.5% 0.003 75); --color-paper-3: oklch(92% 0.010 75);
+  --color-paper: oklch(97% 0.003 268); --color-paper-2: oklch(99.6% 0.001 268); --color-paper-3: oklch(93.5% 0.004 268);
   --color-ink: oklch(22% 0.022 268); --color-ink-2: oklch(32% 0.020 266); --color-muted: oklch(47% 0.016 265);
-  --color-rule: oklch(87.5% 0.009 75);
+  --color-rule: oklch(90.5% 0.005 268);
   --color-focus: oklch(44% 0.13 274);
-  --glass: oklch(97% 0.008 75 / 0.66);
+  --glass: oklch(99% 0.002 268 / 0.68);
   --glass-hi: inset 0 1px 0 oklch(100% 0 0 / 0.75), inset 0 0 0 1px oklch(100% 0 0 / 0.45);
   --shadow-card: 0 1px 0 oklch(100% 0 0 / 0.6) inset, 0 36px 72px -30px oklch(28% 0.04 268 / 0.38);
-  --field-bg: oklch(99.5% 0.003 75 / 0.78); --field-bg-focus: oklch(99.5% 0.003 75);
+  --field-bg: oklch(99.6% 0.001 268 / 0.8); --field-bg-focus: oklch(99.6% 0.001 268);
   --field-border: oklch(22% 0.022 268 / 0.14); --field-border-hover: oklch(22% 0.022 268 / 0.26);
   --notice-ink: oklch(47% 0.12 55);
-  --switch-bg: oklch(97% 0.008 75 / 0.55); --switch-on: oklch(22% 0.022 268); --switch-ink: var(--color-day-muted); --switch-ink-on: oklch(96% 0.006 75);
+  --switch-bg: oklch(99% 0.002 268 / 0.55); --switch-on: oklch(22% 0.022 268); --switch-ink: var(--color-day-muted); --switch-ink-on: oklch(97% 0.003 268);
   color-scheme: light;
 }
 

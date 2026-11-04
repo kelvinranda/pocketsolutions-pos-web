@@ -54,6 +54,9 @@ if (!function_exists('ps_session')) {
         $themeCss = dirname(__DIR__) . '/assets/ps-theme.css';
         $themeVer = is_file($themeCss) ? (string)filemtime($themeCss) : (string)time();
         echo '<link rel="stylesheet" href="assets/ps-theme.css?v=' . rawurlencode($themeVer) . '">' . "\n";
+        // 2026-11-04: Hallmark Dusk phase 1 (tokens + Wix Madefor type). Remove these two lines to undo.
+        $duskCss = dirname(__DIR__) . '/assets/ps-dusk.css';
+        echo '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@400;500;600&family=Wix+Madefor+Text:wght@400;500;600;700&display=swap"><link rel="stylesheet" href="assets/ps-dusk.css?v=' . rawurlencode(is_file($duskCss) ? (string)filemtime($duskCss) : '1') . '">' . "\n";
         // 2026-10-18: Pockets logo as the browser tab / home-screen icon.
         echo '<link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png"><link rel="icon" type="image/png" sizes="16x16" href="assets/icons/favicon-16.png"><link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">' . "\n";
         if (function_exists('psCsrfMeta')) {
