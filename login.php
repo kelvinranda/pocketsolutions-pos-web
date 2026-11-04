@@ -148,24 +148,44 @@ if (isset($error_message)) {
 ?>
 <body class="hm-dusk">
     <div class="dusk">
-        <figure class="dusk__photo" aria-hidden="true">
-            <img src="assets/login/dusk-valley.jpg" alt="" width="1920" height="1254" decoding="async" fetchpriority="high">
-        </figure>
-        <div class="dusk__scrim" aria-hidden="true"></div>
-
         <header class="dusk__bar">
             <div class="dusk__wrap">
-                <span class="dusk__brand">Pockets ICT Solutions</span>
+                <img class="dusk__logo" src="assets/login/pockets-wordmark.png" alt="Pockets ICT Solutions" width="786" height="345">
                 <?php ps_theme_switch(); ?>
             </div>
         </header>
 
         <main class="dusk__wrap dusk__stage">
             <section class="dusk__head" aria-labelledby="dusk-title">
-                <img class="dusk__logo" src="assets/login/pockets-wordmark.png" alt="Pockets ICT Solutions" width="786" height="345">
-                <h1 id="dusk-title">Hello Pockets!</h1>
+                <h1 id="dusk-title">Sell, stock and close the day.</h1>
                 <p>Ring up sales, track stock, and keep every receipt in one point of sale.</p>
             </section>
+
+            <!-- Product preview: a built replica of the Pockets till with demo items (no real company,
+                 user or stock data). It uses the page's colour tokens, so it follows Light/Dark. -->
+            <figure class="till glass" role="img" aria-label="The Pockets till: product cards on the left, the cart with its total and the Print / Submit button on the right.">
+                <div class="till__menu" aria-hidden="true">
+                    <div class="till__cats">
+                        <span class="till__cat till__cat--all is-on">All items</span>
+                        <span class="till__cat till__cat--groc">Groceries</span>
+                        <span class="till__cat till__cat--drink">Drinks</span>
+                    </div>
+                    <div class="till__grid">
+                        <div class="till__card"><span class="till__name">Bread loaf</span><span class="till__stock">Stock 48</span><span class="till__foot"><span class="till__price">$1.20</span><span class="till__step"><span>−</span><span class="till__qty">2</span><span>+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Cooking oil 2L</span><span class="till__stock">Stock 16</span><span class="till__foot"><span class="till__price">$4.50</span><span class="till__step"><span>−</span><span class="till__qty">1</span><span>+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Sugar 2kg</span><span class="till__stock">Stock 30</span><span class="till__foot"><span class="till__price">$2.80</span><span class="till__step"><span>−</span><span class="till__qty">0</span><span>+</span></span></span></div>
+                        <div class="till__card"><span class="till__name">Soft drink 500ml</span><span class="till__stock">Stock 120</span><span class="till__foot"><span class="till__price">$0.80</span><span class="till__step"><span>−</span><span class="till__qty">3</span><span>+</span></span></span></div>
+                    </div>
+                </div>
+                <div class="till__order" aria-hidden="true">
+                    <div class="till__currency"><span class="is-on">USD</span><span>ZWG</span></div>
+                    <div class="till__line"><span>Bread loaf</span><span class="till__x">×2</span><span class="till__amt">$2.40</span></div>
+                    <div class="till__line"><span>Cooking oil 2L</span><span class="till__x">×1</span><span class="till__amt">$4.50</span></div>
+                    <div class="till__line"><span>Soft drink 500ml</span><span class="till__x">×3</span><span class="till__amt">$2.40</span></div>
+                    <div class="till__total"><span>Total</span><span class="till__amt">$9.30</span></div>
+                    <span class="till__pay">Print / Submit</span>
+                </div>
+            </figure>
 
             <section class="signin glass" aria-labelledby="signin-title">
                 <h2 id="signin-title">Welcome back</h2>
@@ -193,14 +213,66 @@ if (isset($error_message)) {
                         <span class="btn__text">Sign in</span>
                     </button>
                 </form>
+
+                <div class="signin__new">
+                    <p>New to Pockets? Call or WhatsApp our team.</p>
+                    <div class="signin__contact">
+                        <!-- Without JavaScript this is a plain tel: link; with it, it opens #callDialog -->
+                        <a class="ghost" href="tel:+263779850816" data-open-dialog="callDialog" aria-haspopup="dialog">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 3.5h2.6l1.4 4.2-2 1.5a12 12 0 0 0 6.2 6.2l1.5-2 4.2 1.4v2.6a2 2 0 0 1-2.1 2A16.5 16.5 0 0 1 4.6 5.6a2 2 0 0 1 2-2.1z"/></svg>
+                            Call
+                        </a>
+                        <a class="ghost" href="https://wa.me/263779850816?text=Hi%2C%20I%27d%20like%20to%20know%20more%20about%20Pockets%20POS." target="_blank" rel="noopener">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l1.3-4A8 8 0 1 1 8.2 19z"/><path d="M9 9.2c.2 2.3 1.6 4 3.8 4.9l1-1 1.7.8c-.2 1-1 1.6-2 1.6-3 0-5.6-2.6-5.6-5.6 0-1 .6-1.8 1.6-2l.8 1.7z"/></svg>
+                            WhatsApp
+                        </a>
+                    </div>
+                </div>
             </section>
+
+            <ul class="caps" aria-label="What Pockets does">
+                <li>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18l-2.5-1.5L12 21l-2.5-1.5L7 21z"/><path d="M10 8h4M10 12h4"/></svg>
+                    <span><strong>ZIMRA fiscal receipts</strong>Fiscal day and receipts handled at the till</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M14.5 9.5c-.4-.9-1.4-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.6 2.5 2 2.5.9 2.5 2-1 2-2.5 2c-1.1 0-2.1-.6-2.5-1.5M12 6.5V8M12 16v1.5"/></svg>
+                    <span><strong>USD and ZWG</strong>Sell in either currency with your own rates</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10l8-5 8 5v9H4z"/><path d="M9 19v-5h6v5"/></svg>
+                    <span><strong>Every branch's stock</strong>Receiving, adjustments and stock takes</span>
+                </li>
+                <li>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="13" height="10" rx="1.5"/><path d="M7 18.5h5"/><rect x="17.5" y="9" width="4" height="10" rx="1"/></svg>
+                    <span><strong>Web, desktop and mobile tills</strong>One back office for every till</span>
+                </li>
+            </ul>
         </main>
 
         <footer class="dusk__wrap dusk__foot">
             <span>Pockets ICT Solutions</span>
-            <span>Photo: <a href="https://commons.wikimedia.org/wiki/File:Vallee-brouillard.jpg" target="_blank" rel="noopener">Thomas Bresson</a>, <a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener">CC BY 3.0</a></span>
         </footer>
     </div>
+
+    <dialog class="modal" id="callDialog" aria-labelledby="callDialogTitle" aria-describedby="callDialogDesc">
+        <form method="dialog" class="modal__close-form">
+            <button class="modal__close" type="submit" aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+        </form>
+        <h2 id="callDialogTitle">Call the Pockets team</h2>
+        <p id="callDialogDesc">Ask about Pockets POS for your business. This number takes calls and WhatsApp.</p>
+        <a class="modal__number" href="tel:+263779850816">+263 77 985 0816</a>
+        <div class="modal__actions">
+            <button class="ghost" type="button" data-copy="+263779850816">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+                <span data-copy-label>Copy number</span>
+            </button>
+            <a class="btn modal__primary" href="tel:+263779850816">Call now</a>
+        </div>
+        <p class="modal__status" role="status" aria-live="polite"></p>
+    </dialog>
     <?php ps_scripts(); ?>
     <script>
     (function () {
@@ -219,6 +291,44 @@ if (isset($error_message)) {
             btn.removeAttribute('aria-busy');
             btn.disabled = false;
             if (label) label.textContent = 'Sign in';
+        });
+    })();
+
+    // Login modals: native <dialog> (focus trap, Esc to close) plus a click on the backdrop to close.
+    (function () {
+        document.querySelectorAll('[data-open-dialog]').forEach(function (trigger) {
+            var dlg = document.getElementById(trigger.getAttribute('data-open-dialog'));
+            if (!dlg || typeof dlg.showModal !== 'function') return; // old browser: keep the tel: link
+            trigger.addEventListener('click', function (e) {
+                e.preventDefault();
+                dlg.showModal();
+            });
+        });
+        document.querySelectorAll('dialog.modal').forEach(function (dlg) {
+            dlg.addEventListener('click', function (e) {
+                if (e.target === dlg) dlg.close(); // click outside the panel
+            });
+            dlg.addEventListener('close', function () {
+                var status = dlg.querySelector('.modal__status');
+                if (status) status.textContent = '';
+            });
+        });
+        document.querySelectorAll('[data-copy]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var text = b.getAttribute('data-copy');
+                var lbl = b.querySelector('[data-copy-label]');
+                var status = b.closest('dialog') && b.closest('dialog').querySelector('.modal__status');
+                var done = function (ok) {
+                    if (lbl) lbl.textContent = ok ? 'Copied' : 'Copy number';
+                    if (status) status.textContent = ok ? 'Number copied.' : 'Copy failed. Select the number above instead.';
+                    setTimeout(function () { if (lbl) lbl.textContent = 'Copy number'; }, 2000);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+                } else {
+                    done(false);
+                }
+            });
         });
     })();
     </script>
