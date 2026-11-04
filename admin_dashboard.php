@@ -8,6 +8,9 @@ require 'session_check.php';
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/stock_movement.php';
 require_once __DIR__ . '/includes/branch_access.php';
+if (is_file(__DIR__ . '/includes/company_logo.php')) {
+    require_once __DIR__ . '/includes/company_logo.php';
+}
 
 mysqli_report(MYSQLI_REPORT_OFF);
 
@@ -36,6 +39,10 @@ $forceSwitch = isset($_GET['switch']) && (string)$_GET['switch'] === '1';
 $workingResolved = $conn ? psBranchResolveWorking($conn) : ['ok' => false];
 $currentSelected = !empty($workingResolved['ok']) ? (string)$workingResolved['branch'] : psBranchSelectedRaw();
 $hasUsableWorking = !empty($workingResolved['ok']);
+// 2026-11-04: the signed-in company's own uploaded logo (company_branding, set on the Receipts page), never a
+// fixed file. The page used to show earth.jpeg (one company's logo) to every company.
+$dashCompany = psCashControlsCompany();
+$dashLogo = ($conn && $dashCompany !== '' && function_exists('psCompanyLogoGet')) ? psCompanyLogoGet($conn, $dashCompany) : null;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -52,9 +59,14 @@ $hasUsableWorking = !empty($workingResolved['ok']);
 
 <div class="content">
   <header class="ps-dash-head">
+    <?php if ($dashLogo !== null): ?>
     <div class="ps-dash-logo">
-      <img class="ps-dash-logo-img" src="earth.jpeg" alt="<?php echo htmlspecialchars($_SESSION['the_company'] ?? 'Company'); ?>">
+      <img class="ps-dash-logo-img" src="<?php echo htmlspecialchars($dashLogo, ENT_QUOTES, 'UTF-8'); ?>" alt="<?php echo htmlspecialchars($dashCompany !== '' ? $dashCompany : 'Company'); ?>">
     </div>
+    <?php else: ?>
+    <!-- No logo uploaded for this company: its initials, not another company's logo -->
+    <div class="ps-dash-logo ps-dash-logo--initials" aria-hidden="true"><?php echo ps_h(ps_initials($dashCompany)); ?></div>
+    <?php endif; ?>
     <div class="ps-dash-copy">
       <h1><?php echo htmlspecialchars($_SESSION['the_company'] ?? 'Welcome back'); ?></h1>
       <?php if ($currentSelected !== ''): ?>

@@ -742,6 +742,19 @@ html[data-theme] body.ps-app .ps-tile:focus-visible {
   outline-offset: 2px;
 }
 
+/* ---------- Admin Home: initials when the company has not uploaded a logo ---------- */
+html[data-theme] body.ps-app .ps-dash-logo--initials {
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  background: var(--ps-card-2);
+  color: var(--ps-text);
+  font-family: var(--ps-font-display) !important;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* ---------- Shared alerts and banners still carrying the old rgba pinks/greens/blues ---------- */
 html[data-theme] body.ps-app .ps-alert-destructive,
 html[data-theme] body.ps-app .error:not(:empty) {
