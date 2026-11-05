@@ -1080,3 +1080,216 @@ html[data-theme] body.ps-app .ps-kpi-sub {
   html[data-theme] body:is(.ps-app, .ps-pos) * { transition-duration: 0ms !important; }
   html[data-theme] body:is(.ps-app, .ps-pos) :is(button, .ps-btn):active { transform: none !important; }
 }
+
+/* ---------- Split payment rows on the till payment sheet (2026-11-05) ---------- */
+html[data-theme] body.ps-pos .split-rows { display: grid; gap: 12px; margin-top: 12px; }
+html[data-theme] body.ps-pos .split-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  background: var(--ps-card-2);
+}
+html[data-theme] body.ps-pos .split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+html[data-theme] body.ps-pos .split-grid:not(:has(select + select)) { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; }
+html[data-theme] body.ps-pos .split-remove { min-width: 40px; padding-inline: 12px; }
+html[data-theme] body.ps-pos .split-add { margin-top: 12px; width: 100%; }
+html[data-theme] body.ps-pos .split-add[hidden] { display: none !important; }
+@media (max-width: 480px) {
+  html[data-theme] body.ps-pos .split-grid { grid-template-columns: 1fr 1fr; }
+}
+
+
+/* ---------- Till: the same custom dropdown as the admin pages (2026-11-05) ----------
+ * Generated from the .ps-select rules in ps-theme.css (body.ps-app -> body.ps-pos), so the payment sheet's method /
+ * currency / change pickers open the modern listbox instead of the browser's native list. ps-theme.js enhances them. */
+/* Custom listbox. The span takes the select's grid/flex slot; the native control stays in the form. */
+html[data-theme] body.ps-pos .ps-select {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+  width: auto;
+  min-width: min(180px, 100%);
+  max-width: 100%;
+}
+html[data-theme] body.ps-pos .modal .ps-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+}
+html[data-theme] body.ps-pos select.ps-select-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  padding: 0;
+  margin: -1px;
+  overflow: clip;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+html[data-theme] body.ps-pos .ps-select-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  height: auto;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--ps-input);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 8px;
+  box-shadow: none;
+  font-family: var(--ps-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+html[data-theme] body.ps-pos .ps-select-trigger:hover,
+html[data-theme] body.ps-pos .ps-select-option:hover {
+  filter: none;
+}
+html[data-theme] body.ps-pos .ps-select-trigger:hover {
+  background: var(--ps-input);
+  border-color: var(--ps-line);
+}
+html[data-theme] body.ps-pos .ps-select-trigger:focus,
+html[data-theme] body.ps-pos .ps-select-trigger:focus-visible,
+html[data-theme] body.ps-pos .ps-select.is-open .ps-select-trigger {
+  outline: 2px solid var(--ps-yellow);
+  outline-offset: 1px;
+  border-color: var(--ps-yellow);
+}
+html[data-theme] body.ps-pos .ps-select-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+html[data-theme] body.ps-pos .ps-select-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+html[data-theme] body.ps-pos .ps-select-trigger.is-placeholder {
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-pos .ps-select-chevron {
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-pos .ps-select-chevron svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+html[data-theme] body.ps-pos .ps-select-panel {
+  position: fixed;
+  z-index: 10050;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px;
+  background: var(--ps-card);
+  color: var(--ps-text);
+  border: 1px solid var(--ps-line);
+  border-radius: 8px;
+  box-shadow: var(--ps-shadow);
+  max-height: 240px;
+  overflow-x: clip;
+  overflow-y: auto;
+}
+html[data-theme] body.ps-pos .ps-select-panel[hidden] {
+  display: none;
+}
+html[data-theme] body.ps-pos .ps-select-group {
+  padding: 8px 12px 4px;
+  font-family: var(--ps-font);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ps-muted);
+}
+html[data-theme] body.ps-pos .ps-select-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--ps-text);
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  font-family: var(--ps-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  overflow: visible;
+  cursor: pointer;
+}
+html[data-theme] body.ps-pos .ps-select-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+html[data-theme] body.ps-pos .ps-select-option:hover,
+html[data-theme] body.ps-pos .ps-select-option.is-active {
+  background: var(--ps-row);
+  color: var(--ps-text);
+  filter: none;
+}
+html[data-theme] body.ps-pos .ps-select-option.is-selected {
+  font-weight: 600;
+}
+html[data-theme] body.ps-pos .ps-select-check {
+  display: inline-flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--ps-text);
+  opacity: 0;
+}
+html[data-theme] body.ps-pos .ps-select-option.is-selected .ps-select-check {
+  opacity: 1;
+}
+html[data-theme] body.ps-pos .ps-select-check svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+html[data-theme] body.ps-pos .pay-sheet .ps-select { display: flex; width: 100%; min-width: 0; }
+html[data-theme] body.ps-pos .split-grid .ps-select { min-width: 0; }

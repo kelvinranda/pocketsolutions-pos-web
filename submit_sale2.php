@@ -8,6 +8,28 @@ require_once __DIR__ . '/includes/cash_movement.php';
 require_once __DIR__ . '/includes/tax.php';
 require_once __DIR__ . '/includes/zimra.php';
 require_once __DIR__ . '/includes/currency.php';
+require_once __DIR__ . '/includes/picking_slip.php';
+require_once __DIR__ . '/includes/order_number.php';
+require_once __DIR__ . '/includes/loyalty.php';
+require_once __DIR__ . '/includes/product_packs.php';
+
+/**
+ * Fingerprint of the order the customer reviewed: product + quantity per line, in order, plus the currency,
+ * customer, quotation and loyalty points used. Prices are always server-side, so the same inputs give the same totals.
+ */
+function psSaleReviewFingerprint($cart, string $currency, $customerId = '', $quoteId = 0, $redeemPoints = 0): string
+{
+    $parts = [strtoupper(trim($currency)), 'c' . (int)$customerId, 'q' . (int)$quoteId, 'p' . (int)$redeemPoints];
+    foreach ((array)$cart as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $pid = trim((string)($item['product_id'] ?? $item['id'] ?? ''));
+        $qty = rtrim(rtrim(number_format((float)($item['quantity'] ?? $item['qty'] ?? 0), 3, '.', ''), '0'), '.');
+        $parts[] = $pid . 'x' . $qty;
+    }
+    return hash('sha256', implode('|', $parts));
+}
 
 function psSaleAbort(mysqli $conn, bool $open, string $error): array
 {
@@ -53,10 +75,14 @@ function psGuardSaleStock(mysqli $conn, array $lines, string $branch): array
             if ($name === '') {
                 $name = $productId;
             }
-            $grouped[$productId] = ['milli' => 0, 'name' => $name];
+            $grouped[$productId] = ['milli' => 0, 'name' => $name, 'label' => ''];
             $order[] = $productId;
         }
         $grouped[$productId]['milli'] += $milli;
+        // 2026-10-28 packs: say it in the stock unit ("Requested: 10 bags. Available: 9 bags").
+        if (!empty($item['sell_unit']) || trim((string)($item['base_label'] ?? '')) !== '') {
+            $grouped[$productId]['label'] = trim((string)($item['base_label'] ?? '')) ?: 'unit';
+        }
     }
 
     $failures = [];
@@ -75,9 +101,11 @@ function psGuardSaleStock(mysqli $conn, array $lines, string $branch): array
         $requested = (int)$grouped[$productId]['milli'];
         $available = (int)$ledger['milli'];
         if ($requested > $available) {
+            $lbl = (string)$grouped[$productId]['label'];
+            $fmt = static fn (int $m) => $lbl !== '' && function_exists('psPackCount') ? psPackCount($m, $lbl) : psStockQtyPlain(psMilliToStock($m));
             $failures[] = 'Insufficient stock for ' . $grouped[$productId]['name']
-                . '. Requested: ' . psStockQtyPlain(psMilliToStock($requested))
-                . '. Available: ' . psStockQtyPlain(psMilliToStock($available)) . '.';
+                . '. Requested: ' . $fmt($requested)
+                . '. Available: ' . $fmt($lbl !== '' ? max(0, $available) : $available) . '.';
         }
     }
     if ($failures) {
@@ -105,8 +133,32 @@ function psCompleteSale(mysqli $conn, array $post): array
         return ['success' => false, 'error' => 'No cart data received.'];
     }
 
-    if (!tillEnsureSchema($conn) || !psEnsureSaleIntegritySchema($conn) || !stockMovementEnsureSchema($conn) || !psEnsureCashMovementModule($conn) || !psEnsureTaxModule($conn)) {
+    if (!tillEnsureSchema($conn) || !psEnsureSaleIntegritySchema($conn) || !stockMovementEnsureSchema($conn) || !psEnsureCashMovementModule($conn) || !psEnsureTaxModule($conn)
+        || !psPrintJobsEnsureSchema($conn) || !psLoyaltyEnsureSchema($conn) || !psPackEnsureSchema($conn)) {
         return ['success' => false, 'error' => 'Payment could not be completed. Please try again.'];
+    }
+    $pickingSlip = psPickingSlipEnabled($conn);
+    // 2026-10-31: restaurant order numbers (company setting). Columns are checked here, before the transaction.
+    $orderNumbers = psOrderNumbersEnabled($conn);
+    if ($orderNumbers && !psOrderNumberEnsureSchema($conn)) {
+        return ['success' => false, 'error' => 'Payment could not be completed. Please try again.'];
+    }
+
+    // Customer confirmation (2026-10-24): the till sends the fingerprint of the order the customer approved.
+    // If the cart (or the till currency) changed after the review, the sale is refused so the new order is reviewed.
+    // The web till always sends it (psSaleRequireReview); library callers (CLI tests, imports) may omit it.
+    $reviewPosted = trim((string)($post['review_fingerprint'] ?? ''));
+    $redeemPoints = trim((string)($post['loyalty_redeem_points'] ?? ''));
+    if ($redeemPoints !== '' && !preg_match('/^\d{1,9}$/', $redeemPoints)) {
+        return ['success' => false, 'error' => 'Enter the number of loyalty points to use as a whole number.'];
+    }
+    $redeemPoints = (int)$redeemPoints;
+    $expectedReview = psSaleReviewFingerprint($cart, (string)($post['currency'] ?? ''), $post['customer_master_id'] ?? '', $post['quotation_id'] ?? 0, $redeemPoints);
+    if ($reviewPosted === '' && !empty($post['_require_review'])) {
+        return ['success' => false, 'error' => 'Show the ticket to the customer and confirm it before completing the sale.', 'review_required' => true];
+    }
+    if ($reviewPosted !== '' && !hash_equals($expectedReview, $reviewPosted)) {
+        return ['success' => false, 'error' => 'The order changed after the customer confirmed it. Review the ticket with the customer again.', 'review_required' => true];
     }
 
     $signedIn = tillCurrentCashier($conn);
@@ -149,6 +201,13 @@ function psCompleteSale(mysqli $conn, array $post): array
         return ['success' => false, 'error' => $tokenCheck['error']];
     }
     $paymentToken = (string)$tokenCheck['token'];
+
+    // 2026-10-31: ZIMRA tables are checked HERE, before the transaction. Their CREATE TABLE inside the transaction made MySQL
+    // commit the half-saved sale (header, lines, payment), so a ZIMRA refusal could not be rolled back and every retry
+    // was refused as "already submitted".
+    if (function_exists('psEnsureZimraModule') && !psEnsureZimraModule($conn)) {
+        return ['success' => false, 'error' => 'Payment could not be completed. Please try again.'];
+    }
 
     if (!mysqli_begin_transaction($conn)) {
         return psSaleAbort($conn, false, 'Payment could not be completed. Please try again.');
@@ -231,16 +290,56 @@ function psCompleteSale(mysqli $conn, array $post): array
         return psSaleAbort($conn, true, $cartSale['error']);
     }
 
-    $payment = psEvaluatePayment(
-        (int)$cartSale['total_cents'],
-        $post['amount_paid'] ?? '',
-        $post['payment_method'] ?? '',
-        $post['payment_reference'] ?? '',
-        $saleCurrency
-    );
-    if (!$payment['ok']) {
-        return psSaleAbort($conn, true, $payment['error']);
+    // Loyalty redemption: priced on the server cart, customer row locked so two tills cannot spend the same points.
+    $loyaltyCfg = psLoyaltyConfig($conn, $company);
+    $redeem = ['points' => 0, 'discount_cents' => 0, 'base_cents' => 0];
+    if ($redeemPoints > 0) {
+        $redeemCustomer = (int)($post['customer_master_id'] ?? 0);
+        if ($redeemCustomer < 1) {
+            return psSaleAbort($conn, true, 'Choose the customer whose loyalty points are being used.');
+        }
+        psLoyaltyApplyExpiry($conn, $redeemCustomer, $company);
+        $balance = psLoyaltyBalance($conn, $redeemCustomer, $company, true);
+        $quoteR = psLoyaltyRedemptionQuote($conn, $loyaltyCfg, $redeemPoints, $balance, (int)$cartSale['total_cents'], $fxSnap);
+        if (empty($quoteR['ok'])) {
+            return psSaleAbort($conn, true, (string)$quoteR['error']);
+        }
+        $redeem = $quoteR;
+        $cartSale = psBuildSaleLines($conn, $cart, $branch, $company, null, $overrides, $fxSnap, (int)$redeem['discount_cents']);
+        if (!$cartSale['ok']) {
+            return psSaleAbort($conn, true, $cartSale['error']);
+        }
     }
+
+    // 2026-11-05 split payment / split currency: a list of tenders (old single fields still work as one tender).
+    $tenderEval = psEvaluateTenders(
+        $conn,
+        $company,
+        $saleCurrency,
+        (int)$cartSale['total_cents'],
+        psTendersFromRequest($post, $saleCurrency),
+        (string)($post['change_currency'] ?? ''),
+        $fxNow
+    );
+    if (empty($tenderEval['ok'])) {
+        return psSaleAbort($conn, true, (string)$tenderEval['error']);
+    }
+    $firstTender = $tenderEval['tenders'][0];
+    $changeSaleCents = (int)($tenderEval['change']['sale_cents'] ?? 0);
+    // The single-payment view the rest of this function (credit, loyalty, receipt) already uses.
+    $payment = [
+        'ok' => true,
+        'method' => $tenderEval['is_split'] ? 'SPLIT' : $firstTender['method'],
+        'method_label' => $tenderEval['is_split'] ? 'Split payment' : $firstTender['method_label'],
+        'amount_paid' => psMoneyFromCents((int)$tenderEval['paid_sale_cents']),
+        'change_amount' => psMoneyFromCents($changeSaleCents),
+        'amount_cents' => (int)$tenderEval['paid_sale_cents'],
+        'change_cents' => $changeSaleCents,
+        'total_cents' => (int)$cartSale['total_cents'],
+        'currency' => $saleCurrency,
+        'reference' => $tenderEval['is_split'] ? '' : $firstTender['reference'],
+        'is_credit' => !empty($tenderEval['is_credit']),
+    ];
     if (((int)$payment['amount_cents'] - (int)$payment['change_cents']) !== (int)$cartSale['total_cents']) {
         return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
     }
@@ -249,6 +348,9 @@ function psCompleteSale(mysqli $conn, array $post): array
     $customer = psResolveSaleCustomer($conn, $post['customer_master_id'] ?? '', $post['customer_name'] ?? '');
     if (!$customer['ok']) {
         return psSaleAbort($conn, true, $customer['error']);
+    }
+    if ($redeem['points'] > 0 && (int)$customer['id'] !== (int)($post['customer_master_id'] ?? 0)) {
+        return psSaleAbort($conn, true, 'Choose the customer whose loyalty points are being used.');
     }
 
     // Phase 6.2 / 6.5 — CREDIT: ACTIVE customer + ACTIVE account + credit_status=NORMAL + facility;
@@ -342,6 +444,16 @@ function psCompleteSale(mysqli $conn, array $post): array
     }
     $headerId = (int)mysqli_insert_id($conn);
 
+    // Order number for this till session (W01-001 …), rolled back with the sale if anything below fails.
+    $orderNo = '';
+    if ($orderNumbers) {
+        $orderNo = (string)psOrderNumberNext($conn, $tillSessionId, 'W');
+        if ($orderNo === '' || !psOrderNumberSave($conn, (string)$invoiceNumber, $orderNo)) {
+            error_log('sale: order number was not allocated');
+            return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
+        }
+    }
+
     foreach ($cartSale['lines'] as $item) {
         $productId = mysqli_real_escape_string($conn, $item['product_id']);
         $product = mysqli_real_escape_string($conn, $item['product']);
@@ -382,22 +494,27 @@ function psCompleteSale(mysqli $conn, array $post): array
         $sql = "INSERT INTO online_sales
             (invoice_number, product_id, product, quantity, revenue, unit_price, cost_price, date_, customer, cashier, branch,
              tax_code, tax_classification, tax_rate_percent, tax_pricing_mode, discount_amount,
-             taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status)
+             taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status,
+             sell_unit, sell_qty, sell_factor, sell_price, pack_id)
             VALUES
             ($invoiceNumber, '$productId', '$product', '$quantity', '$revenue', '$unitPrice', $costSql, '$dateSql', '$customerSql', '$cashierSql', '$branchSql',
              $taxCodeSql, $taxClassSql, $taxRateSql, $taxModeSql, $discSql,
-             $taxableSql, $taxAmtSql, $exclSql, $inclSql, '$lineTaxStatus')";
+             $taxableSql, $taxAmtSql, $exclSql, $inclSql, '$lineTaxStatus',
+             " . psPackSaleLineSql($conn, $item) . ")";
         if (!mysqli_query($conn, $sql)) {
             error_log('sale: line insert failed');
             return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
         }
     }
 
-    $sqlPay = "INSERT INTO sale_payments
-        (invoice_number, method, amount_paid, change_amount, currency, reference, cashier_id, cashier_email, till_session_id, created_at, payment_token)
-        VALUES
-        ('$invoiceNumber', '$methodSql', $paidSql, $changeSql, '$currencySql', $referenceSql, $cashierIdSql, '$cashierSql', $tillSessionId, '$nowSql', '$tokenSql')";
-    if (!mysqli_query($conn, $sqlPay)) {
+    // 2026-11-05: one sale_payments row per tender (+ the change row for a split); tokens token-1, token-2, token-C.
+    $payRowsOk = psInsertSaleTenders($conn, (string)$invoiceNumber, $tenderEval, [
+        'cashier_id' => ((int)($cashier['id'] ?? 0) > 0) ? (int)$cashier['id'] : null,
+        'cashier_email' => $cashierEmail,
+        'till_session_id' => $tillSessionId,
+        'created_at' => $now,
+    ], $paymentToken);
+    if (!$payRowsOk) {
         $replay = mysqli_errno($conn) === 1062;
         error_log('sale: payment insert failed');
         $message = $replay
@@ -466,18 +583,20 @@ function psCompleteSale(mysqli $conn, array $post): array
         }
     }
 
-    // Phase 7.1 — CASH_SALE cash ledger only for CASH tender (sale total = cash into till).
-    // CARD / ECOCASH / BANK_TRANSFER / CREDIT / OTHER do not create cash movements.
-    if (strtoupper(trim((string)$payment['method'])) === 'CASH') {
-        $cashPost = psCashMovementPostCashSale(
+    // Phase 7.1 — cash ledger only for CASH tenders. CARD / ECOCASH / BANK_TRANSFER / CREDIT / OTHER do not move cash.
+    // 2026-11-05: per currency drawer — cash tendered in it minus change given in it (psCashMovementPostSaleTenders).
+    if (psTenderCashByCurrency($tenderEval)) {
+        $cashPost = psCashMovementPostSaleTenders(
             $conn,
             $tillSessionId,
             $branch,
-            (string)$saleTotal,
             $invoiceNumber,
             $cashierEmail,
-            $now,
-            $fxSnap
+            $tenderEval,
+            $company,
+            $saleCurrency,
+            $fxSnap,
+            $now
         );
         if (empty($cashPost['ok'])) {
             error_log('sale: cash sale movement failed');
@@ -486,6 +605,22 @@ function psCompleteSale(mysqli $conn, array $post): array
                 : 'Payment could not be completed. Please try again.';
             return psSaleAbort($conn, true, $message);
         }
+    }
+
+    // Loyalty: points used and earned are posted once with the sale; qualifying spend is the stored base total.
+    $loyaltyPosted = psLoyaltyPostSale($conn, [
+        'cfg' => $loyaltyCfg, 'company' => $company, 'customer_id' => (int)($customer['id'] ?? 0),
+        'invoice' => (string)$invoiceNumber, 'branch' => $branch, 'by' => $cashierEmail, 'at' => $now,
+        'base_currency' => (string)$fxSnap['base'], 'method' => (string)$payment['method'],
+        // 2026-11-05: a split sale earns only on the tenders whose method earns points (change comes off the cash).
+        'base_cents' => psFxToBaseCents($conn, $fxSnap, $tenderEval['is_split']
+            ? psLoyaltySplitEarningCents($loyaltyCfg, $tenderEval, (int)$cartSale['total_cents'])
+            : (int)$cartSale['total_cents']),
+        'redeem_points' => (int)$redeem['points'], 'redeem_base_cents' => (int)$redeem['base_cents'],
+    ]);
+    if (empty($loyaltyPosted['ok'])) {
+        error_log('sale: loyalty posting failed');
+        return psSaleAbort($conn, true, (string)$loyaltyPosted['error']);
     }
 
     // Phase 17 — ZIMRA fiscal invoice: numbered + signed in this transaction (no network here).
@@ -502,21 +637,28 @@ function psCompleteSale(mysqli $conn, array $post): array
     $money = static function ($v) use ($conn, $saleCurrency) {
         return psFxFormat($conn, $v, $saleCurrency);
     };
-    $receipt = "EARTHQUIP\n";
-    $receipt .= "--------------------------------\n";
+    // 2026-10-31: the selling company's name (it was hard-coded "EARTHQUIP" for every company).
+    $receipt = strtoupper($company !== '' ? $company : 'RECEIPT') . "\n";
+    $receipt .= $orderNo !== '' ? psOrderNumberReceiptBlock($orderNo) : "--------------------------------\n";
     $receipt .= "Invoice : $invoiceNumber\n";
     $receipt .= 'Customer: ' . $customer['name'] . "\n";
     $receipt .= 'Cashier : ' . $cashierEmail . "\n";
     $receipt .= "Date    : $now\n";
-    $receipt .= 'Branch  : ' . $branch . "\n";
+    $receipt .= 'Branch  : ' . psBranchLabel($branch) . "\n"; // 2026-11-02 shared branch names
     $receipt .= 'Currency: ' . $saleCurrency . "\n";
     $receipt .= "--------------------------------\n";
     foreach ($cartSale['lines'] as $item) {
         $receipt .= $item['product'] . "\n";
-        $receipt .= $item['quantity'] . ' x ' .
-            $money($item['price']) .
-            ' = ' .
-            $money($item['revenue']) . "\n";
+        if (!empty($item['sell_unit'])) {
+            // Sold in a pack: "1 pack (10 bags) x $18.00 = $18.00".
+            $receipt .= psPackLineQtyText($item, (string)($item['base_label'] ?? '')) . ' x '
+                . $money($item['sell_price']) . ' = ' . $money($item['revenue']) . "\n";
+        } else {
+            $receipt .= $item['quantity'] . ' x ' .
+                $money($item['price']) .
+                ' = ' .
+                $money($item['revenue']) . "\n";
+        }
         if (($item['tax_data_status'] ?? '') === PS_TAX_STATUS_COMPLETE) {
             $receipt .= '  Tax ' . ($item['tax_code'] ?? '') . ' '
                 . ($item['tax_classification'] ?? '') . ' @ '
@@ -529,23 +671,49 @@ function psCompleteSale(mysqli $conn, array $post): array
         $receipt .= 'Taxable: ' . $money($cartSale['taxable_amount']) . "\n";
         $receipt .= 'Tax    : ' . $money($cartSale['tax_amount']) . "\n";
     }
+    if ($redeem['points'] > 0) {
+        $receipt .= 'Points used: ' . $redeem['points'] . ' (-' . $money(psFxCentsToMoney((int)$redeem['discount_cents'])) . ")\n";
+    }
     $receipt .= 'TOTAL : ' . $money($saleTotal) . "\n";
-    $receipt .= 'Paid  : ' . $money($payment['amount_paid']) . "\n";
-    $receipt .= 'Method: ' . $payment['method_label'] . "\n";
-    $receipt .= 'Change: ' . $money($payment['change_amount']) . "\n";
-    // 2026-10-20: the exchange rate is kept with the sale but not printed on the customer receipt.
-    if ($payment['reference'] !== '') {
-        $receipt .= 'Ref   : ' . $payment['reference'] . "\n";
+    if ($tenderEval['is_split']) {
+        // 2026-11-05: one line per payment, each in its own currency, then the change in the currency given.
+        foreach (psTenderReceiptLines($tenderEval, static fn(int $c, string $cur) => psFxFormat($conn, psMoneyFromCents($c), $cur)) as [$label, $amt]) {
+            $receipt .= str_pad($label, 20) . ' ' . $amt . "\n";
+        }
+    } else {
+        $receipt .= 'Paid  : ' . $money($payment['amount_paid']) . "\n";
+        $receipt .= 'Method: ' . $payment['method_label'] . "\n";
+        $receipt .= 'Change: ' . $money($payment['change_amount']) . "\n";
+        // 2026-10-20: the exchange rate is kept with the sale but not printed on the customer receipt.
+        if ($payment['reference'] !== '') {
+            $receipt .= 'Ref   : ' . $payment['reference'] . "\n";
+        }
     }
     if ($zimraReceiptRow) {
         $receipt .= psZimraReceiptTextBlock(psZimraReceiptView($conn, $zimraReceiptRow));
     }
+    if (!empty($loyaltyPosted['earned']) || $redeem['points'] > 0) {
+        $receipt .= 'Points earned: ' . (int)$loyaltyPosted['earned'] . "\n";
+        $receipt .= 'Points balance: ' . psLoyaltyBalance($conn, (int)$customer['id'], $company) . "\n";
+    }
     $receipt .= "\nThank you!\n\n";
     $receiptSql = mysqli_real_escape_string($conn, $receipt);
-    $sqlPrint = "INSERT INTO print_jobs (invoice_number, receipt, status) VALUES ($invoiceNumber, '$receiptSql', 'Pending')";
+    $sqlPrint = "INSERT INTO print_jobs (invoice_number, receipt, status, document) VALUES ($invoiceNumber, '$receiptSql', 'Pending', 'RECEIPT')";
     if (!mysqli_query($conn, $sqlPrint)) {
         error_log('sale: print job failed');
         return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
+    }
+    // Two-document mode: the storeroom picking slip for the same invoice (no prices, no new number, no postings).
+    if ($pickingSlip) {
+        $slipText = psPickingSlipText(
+            ['invoice' => (string)$invoiceNumber, 'date' => $now, 'branch' => $branch, 'cashier' => $cashierEmail,
+             'customer' => $customer['id'] !== null ? (string)$customer['name'] : '', 'order' => $orderNo],
+            psPickingSlipGroup($cartSale['lines'])
+        );
+        if (!psPickingSlipQueue($conn, (string)$invoiceNumber, $slipText)) {
+            error_log('sale: picking slip job failed');
+            return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
+        }
     }
 
     if ($quote !== null && !psQuoteMarkConverted($conn, (int)$quote['id'], (string)$invoiceNumber, $cashierEmail)) {
@@ -574,9 +742,20 @@ function psCompleteSale(mysqli $conn, array $post): array
 
     return [
         'success' => true,
-        'message' => "✅ Sale completed successfully!\n\nInvoice No: " . $invoiceNumber . "\nThe receipt has been queued for printing." . $zimraNote,
+        'message' => "✅ Sale completed successfully!\n\n" . ($orderNo !== '' ? 'ORDER ' . $orderNo . "\n" : '') . 'Invoice No: ' . $invoiceNumber
+            . ($pickingSlip ? "\nThe receipt and the storeroom picking slip have been queued for printing." : "\nThe receipt has been queued for printing.")
+            . ($redeem['points'] > 0 ? "\nLoyalty points used: " . $redeem['points'] : '')
+            . (!empty($loyaltyPosted['earned']) ? "\nLoyalty points earned: " . (int)$loyaltyPosted['earned'] : '')
+            . $zimraNote,
         'invoice_number' => $invoiceNumber,
+        'order_number' => $orderNo,
+        'picking_slip' => $pickingSlip,
+        'loyalty' => ['used' => (int)$redeem['points'], 'earned' => (int)($loyaltyPosted['earned'] ?? 0)],
         'currency' => $saleCurrency,
+        // 2026-11-05: the change the server worked out (the till shows it), in the currency it is given in.
+        'change' => $tenderEval['change'] !== null
+            ? ['currency' => $tenderEval['change']['currency'], 'amount' => psMoneyFromCents((int)$tenderEval['change']['amount_cents'])]
+            : null,
         'quote_number' => $quote['quote_number'] ?? null,
         'url' => 'ajax_pos.php',
     ];
@@ -612,5 +791,7 @@ if (!psCsrfValidate()) {
     exit;
 }
 
-echo json_encode(psCompleteSale($conn, $_POST));
+$salePost = $_POST;
+$salePost['_require_review'] = 1;
+echo json_encode(psCompleteSale($conn, $salePost));
 mysqli_close($conn);

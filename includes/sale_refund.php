@@ -26,6 +26,7 @@ require_once __DIR__ . '/till_session.php';
 require_once __DIR__ . '/cash_movement.php';
 require_once __DIR__ . '/currency.php';
 require_once __DIR__ . '/product_master.php';
+require_once __DIR__ . '/loyalty.php';
 
 const PS_REFUND_REASON_CUSTOMER_RETURN = 'CUSTOMER_RETURN';
 const PS_REFUND_REASON_DAMAGED_ITEM = 'DAMAGED_ITEM';
@@ -242,6 +243,21 @@ function psRefundCheckSelfApproval(mysqli $conn, string $requester, string $appr
         return ['ok' => false, 'error' => 'The refund request could not be updated.'];
     }
     if (strcasecmp($requester, $approver) !== 0) {
+        return ['ok' => true];
+    }
+    // 2026-11-02: company role permission "Refund without approval" lets this role approve its own request.
+    require_once __DIR__ . '/role_permissions.php';
+    $approverLevel = strcasecmp($approver, trim((string)($_SESSION['logger'] ?? ''))) === 0 ? (string)($_SESSION['level'] ?? '') : '';
+    if ($approverLevel === '') {
+        $lv = mysqli_prepare($conn, 'SELECT level FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1');
+        if ($lv) {
+            mysqli_stmt_bind_param($lv, 's', $approver);
+            mysqli_stmt_execute($lv);
+            $approverLevel = (string)((mysqli_fetch_assoc(mysqli_stmt_get_result($lv)) ?: [])['level'] ?? '');
+            mysqli_stmt_close($lv);
+        }
+    }
+    if ($approverLevel !== '' && psRolePermAllowed($approverLevel, 'refund_self', null, $conn)) {
         return ['ok' => true];
     }
     if (psRefundOtherApproverExists($conn, $approver)) {
@@ -481,8 +497,51 @@ function psEnsureSaleRefundRequestsSchema(mysqli $conn): bool
         error_log('sale_refund_requests schema was not created');
         return false;
     }
+    // 2026-11-05 split payment: the cashier picks how the money goes back (method + currency) on the request.
+    if (!psEnsureColumn($conn, 'sale_refund_requests', 'refund_method', 'VARCHAR(32) NULL DEFAULT NULL')
+        || !psEnsureColumn($conn, 'sale_refund_requests', 'refund_currency', 'CHAR(3) NULL DEFAULT NULL')) {
+        return false;
+    }
     $ready = true;
     return true;
+}
+
+/**
+ * 2026-11-05: how a refund pays the customer back — the cashier's choice, checked.
+ * Default: the sale's own method when it was paid one way (as before), else cash; currency: the sale currency.
+ * CREDIT only for a sale made on credit. The currency must be one the company sells in.
+ *
+ * @return array{ok:bool,method?:string,currency?:string,error?:string}
+ */
+function psRefundChooseTender(mysqli $conn, string $invoice, array $request): array
+{
+    $sale = psCashMovementSalePaymentMethod($conn, $invoice);
+    $saleMethod = (!empty($sale['ok']) && empty($sale['unknown'])) ? (string)$sale['method'] : '';
+    $snap = psFxSaleSnapshot($conn, $invoice);
+    $saleCur = (string)($snap['currency'] ?? '') ?: 'USD';
+    $method = strtoupper(trim((string)($request['refund_method'] ?? '')));
+    $cur = strtoupper(trim((string)($request['refund_currency'] ?? '')));
+    if ($method === '') {
+        $method = ($saleMethod !== '' && $saleMethod !== 'SPLIT') ? $saleMethod : 'CASH';
+    }
+    $methods = psPaymentMethods();
+    if (!isset($methods[$method])) {
+        return ['ok' => false, 'error' => 'Choose how the money goes back.'];
+    }
+    if ($method === 'CREDIT' && $saleMethod !== 'CREDIT') {
+        return ['ok' => false, 'error' => 'Only a sale made on credit can be refunded to the account.'];
+    }
+    $cur = $cur !== '' ? $cur : $saleCur;
+    if ($cur !== $saleCur) {
+        if ($method === 'CREDIT') {
+            return ['ok' => false, 'error' => 'A credit refund goes back in the sale currency.'];
+        }
+        $company = trim((string)($_SESSION['the_company'] ?? ''));
+        if (!isset(psFxCompanyCurrencies($conn, $company)[$cur])) {
+            return ['ok' => false, 'error' => $cur . ' is not a currency this company sells in.'];
+        }
+    }
+    return ['ok' => true, 'method' => $method, 'currency' => $cur];
 }
 
 /**
@@ -531,7 +590,8 @@ function psEnsureSaleRefundModule(mysqli $conn): bool
         && psEnsureSaleRefundRequestsSchema($conn)
         && psEnsureSaleRefundRequestLinesSchema($conn)
         && stockMovementEnsureSchema($conn)
-        && psEnsureCashMovementModule($conn);
+        && psEnsureCashMovementModule($conn)
+        && psLoyaltyEnsureSchema($conn);
 }
 
 /**
@@ -571,6 +631,13 @@ function psAllocateRefundNumber(mysqli $conn): array
     return ['ok' => true, 'refund_number' => $refundNumber];
 }
 
+/** 2026-10-28: the pack snapshot columns of a sale line (sold in a pack), when the packs module is installed. */
+function psRefundPackCols(mysqli $conn): string
+{
+    require_once __DIR__ . '/product_packs.php';
+    return psPackEnsureSchema($conn) ? ', sell_unit, sell_qty, sell_factor, sell_price, pack_id' : '';
+}
+
 /**
  * Authoritative refund line amount in cents.
  * Phase 12: COMPLETE tax lines use stored line_total_incl (or revenue) proportionally —
@@ -597,6 +664,30 @@ function psRefundLineAmountCents(array $line, $qtyOverride = null): ?int
             return (int)$alloc['payable_cents'];
         }
         // Incomplete COMPLETE row → fall through; do not invent.
+    }
+
+    // A discounted line (e.g. loyalty redemption) refunds its share of what was actually paid, not unit × qty.
+    $discCents = psDecimalCents((string)($line['discount_amount'] ?? ''));
+    if ($discCents !== null && $discCents > 0) {
+        $revCents = psDecimalCents((string)($line['revenue'] ?? ''));
+        $soldMilli = psStockMilli($soldRaw);
+        $refMilli = psStockMilli($qtyRaw);
+        if ($revCents === null || $revCents < 0 || $soldMilli === null || $refMilli === null || $soldMilli <= 0 || $refMilli > $soldMilli) {
+            return null;
+        }
+        return $refMilli === $soldMilli ? $revCents : (int)round($revCents * $refMilli / $soldMilli);
+    }
+
+    // 2026-10-28 packs: a line sold in a pack is refunded pro-rata of what was paid for it (quantity is in base units),
+    // so returning the whole pack gives back exactly the pack amount and part of a pack its share — never today's price.
+    if (trim((string)($line['sell_unit'] ?? '')) !== '' && $soldDec !== null) {
+        $revCents = psDecimalCents((string)($line['revenue'] ?? ''));
+        $soldMilli = psStockMilli($soldDec);
+        $qMilli = psStockMilli($qtyDec);
+        if ($revCents === null || $revCents < 0 || !$soldMilli || $qMilli === null || $qMilli > $soldMilli) {
+            return null;
+        }
+        return $qMilli === $soldMilli ? $revCents : intdiv($revCents * $qMilli * 2 + $soldMilli, 2 * $soldMilli);
     }
 
     $unitRaw = $line['unit_price'] ?? null;
@@ -648,8 +739,8 @@ function psGetRefundableSaleLineQuantity(mysqli $conn, $saleLineId, bool $forUpd
     $stmt = mysqli_prepare(
         $conn,
         'SELECT id, quantity, status, unit_price, revenue, product_id, branch, invoice_number,
-                tax_code, tax_classification, tax_rate_percent, tax_pricing_mode,
-                taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status
+                tax_code, tax_classification, tax_rate_percent, tax_pricing_mode, discount_amount,
+                taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status' . psRefundPackCols($conn) . '
          FROM online_sales WHERE id = ? LIMIT 1' . $lock
     );
     if (!$stmt) {
@@ -964,8 +1055,8 @@ function psRefundLoadSaleLines(mysqli $conn, $lineId, $invoiceNumber, bool $forU
     require_once __DIR__ . '/tax.php';
     psEnsureSaleTaxColumns($conn);
     $taxSelect = 'id, invoice_number, product_id, product, quantity, revenue, unit_price, branch, status,
-                tax_code, tax_classification, tax_rate_percent, tax_pricing_mode,
-                taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status';
+                tax_code, tax_classification, tax_rate_percent, tax_pricing_mode, discount_amount,
+                taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status' . psRefundPackCols($conn);
     if ($lineMode) {
         if (!preg_match('/^[1-9][0-9]*$/', $lineId)) {
             return ['ok' => false, 'error' => 'The item was not found.'];
@@ -1417,6 +1508,10 @@ function psRequestRefund(mysqli $conn, array $request, bool $manageTransaction =
         if (!psRefundBranchAccess($conn, $saleBranch)) {
             throw new RuntimeException('You do not have access to this branch.');
         }
+        require_once __DIR__ . '/operator_scope.php';
+        if (!psOperatorMayRefundSale($conn, $headerInvoice)) {
+            throw new RuntimeException('The receipt was not found.');
+        }
 
         // No reservation for REQUESTED/APPROVED — only PROCESSED consumes remaining (8.3).
 
@@ -1483,6 +1578,20 @@ function psRequestRefund(mysqli $conn, array $request, bool $manageTransaction =
             $okUpd = mysqli_stmt_execute($upd);
             mysqli_stmt_close($upd);
             if (!$okUpd) {
+                throw new RuntimeException('The refund could not be saved.');
+            }
+        }
+        // 2026-11-05: the method and currency the money goes back in (cashier's choice; see psRefundChooseTender).
+        $tender = psRefundChooseTender($conn, $headerInvoice, $request);
+        if (empty($tender['ok'])) {
+            throw new RuntimeException((string)$tender['error']);
+        }
+        $tUpd = mysqli_prepare($conn, 'UPDATE sale_refund_requests SET refund_method = ?, refund_currency = ? WHERE id = ?');
+        if ($tUpd) {
+            mysqli_stmt_bind_param($tUpd, 'ssi', $tender['method'], $tender['currency'], $requestId);
+            $okT = mysqli_stmt_execute($tUpd);
+            mysqli_stmt_close($tUpd);
+            if (!$okT) {
                 throw new RuntimeException('The refund could not be saved.');
             }
         }
@@ -1880,6 +1989,10 @@ function psProcessApprovedRefund(mysqli $conn, array $request, bool $manageTrans
         $request['quantity']
     );
 
+    // 2026-10-31: ZIMRA tables checked before the transaction (DDL inside it would commit a half-done refund).
+    require_once __DIR__ . '/zimra.php';
+    require_once __DIR__ . '/zimra_receipts.php';
+    psEnsureZimraModule($conn);
     $owns = $manageTransaction;
     if ($owns && !mysqli_begin_transaction($conn)) {
         return ['ok' => false, 'error' => 'The refund could not be saved.'];
@@ -1908,6 +2021,10 @@ function psProcessApprovedRefund(mysqli $conn, array $request, bool $manageTrans
         $saleBranch = trim((string)($reqRow['branch'] ?? ''));
         if (!psRefundBranchAccess($conn, $saleBranch)) {
             throw new RuntimeException('You do not have access to this branch.');
+        }
+        require_once __DIR__ . '/operator_scope.php';
+        if (!psOperatorMayAccessRefundRequest($reqRow)) {
+            throw new RuntimeException('The refund request was not found.');
         }
 
         $reason = strtoupper(trim((string)($reqRow['reason'] ?? '')));
@@ -1981,6 +2098,15 @@ function psProcessApprovedRefund(mysqli $conn, array $request, bool $manageTrans
         }
         $methodKnown = empty($payMethod['unknown']);
         $method = $methodKnown ? strtoupper(trim((string)($payMethod['method'] ?? ''))) : '';
+        // 2026-11-05: the refund's own method / currency (chosen by the cashier on the request) decide how the money
+        // goes back; requests made before have none and keep the old rule (the sale's method, sale currency).
+        $refundCurrency = '';
+        $chosen = strtoupper(trim((string)($reqRow['refund_method'] ?? '')));
+        if ($chosen !== '') {
+            $method = $chosen;
+            $methodKnown = true;
+            $refundCurrency = strtoupper(trim((string)($reqRow['refund_currency'] ?? '')));
+        }
         $isCashRefund = $methodKnown && $method === 'CASH';
         $auditMethod = $methodKnown ? $method : 'UNKNOWN';
 
@@ -2153,17 +2279,35 @@ function psProcessApprovedRefund(mysqli $conn, array $request, bool $manageTrans
             $cashRefId = $refundNumber;
             $cashDesc = 'Cash refund ' . $refundNumber . ' invoice ' . $headerInvoice;
             // Multi-currency: cash goes back in the sale's own currency at the sale's own rate.
+            // 2026-11-05: or in the currency the cashier chose: the refund amount (sale currency) converted at the rate
+            // in force when the sale was made, into that currency's drawer.
+            $saleSnap = psFxSaleSnapshot($conn, $headerInvoice);
+            $cashAmount = $refundAmount;
+            $cashFx = $saleSnap;
+            if ($refundCurrency !== '' && $refundCurrency !== (string)($saleSnap['currency'] ?? '')) {
+                $soldAtRow = mysqli_fetch_assoc(mysqli_query($conn, "SELECT COALESCE(sold_at, CONCAT(date_, ' 12:00:00')) AS at FROM online_sales_ref WHERE invoice_number = '"
+                    . mysqli_real_escape_string($conn, $headerInvoice) . "' LIMIT 1") ?: null) ?: [];
+                $soldAt = (string)($soldAtRow['at'] ?? '') ?: date('Y-m-d H:i:s');
+                $company = psFxTillCompany($conn, $tillSessionId);
+                $conv = psFxRate($conn, $company, (string)$saleSnap['currency'], $refundCurrency, $soldAt);
+                if (empty($conv['ok'])) {
+                    throw new RuntimeException('There is no exchange rate to give this refund in ' . $refundCurrency . '.');
+                }
+                $cashAmount = psFxCentsToMoney(psFxConvertCents((int)psFxMoneyToCents($refundAmount), $conv['frac'], psFxDecimals($conn, $refundCurrency)));
+                $cashFx = psFxSnapshot($conn, $company, $refundCurrency, $soldAt);
+                $cashDesc .= ' (' . $refundAmount . ' ' . $saleSnap['currency'] . ' given as ' . $cashAmount . ' ' . $refundCurrency . ')';
+            }
             $cashPost = psCashMovementPostCashRefund(
                 $conn,
                 $tillSessionId,
                 $saleBranch,
-                $refundAmount,
+                $cashAmount,
                 $cashRefType,
                 $cashRefId,
                 $actorEmail,
                 $cashDesc,
                 $movementAt,
-                psFxSaleSnapshot($conn, $headerInvoice)
+                $cashFx
             );
             if (empty($cashPost['ok'])) {
                 if (!empty($cashPost['duplicate'])) {
@@ -2201,6 +2345,23 @@ function psProcessApprovedRefund(mysqli $conn, array $request, bool $manageTrans
             throw new RuntimeException(!empty($audit['duplicate'])
                 ? 'This refund was already recorded.'
                 : 'The refund could not be saved.');
+        }
+
+        // Loyalty: points earned on the sale are taken back (and points used given back) in proportion to this refund.
+        $saleTotalStmt = mysqli_prepare($conn, 'SELECT totalz FROM online_sales_ref WHERE invoice_number = ? LIMIT 1');
+        $saleTotalCents = 0;
+        if ($saleTotalStmt) {
+            mysqli_stmt_bind_param($saleTotalStmt, 's', $headerInvoice);
+            mysqli_stmt_execute($saleTotalStmt);
+            $stRow = mysqli_fetch_assoc(mysqli_stmt_get_result($saleTotalStmt));
+            mysqli_stmt_close($saleTotalStmt);
+            $saleTotalCents = (int)(psDecimalCents((string)($stRow['totalz'] ?? '0')) ?? 0);
+        }
+        $loyaltyCompany = psLoyaltyCompany();
+        $loyaltyRev = psLoyaltyReverseForRefund($conn, $loyaltyCompany, $headerInvoice, $refundNumber,
+            (int)(psDecimalCents($refundAmount) ?? 0), $saleTotalCents, $saleBranch, $actorEmail);
+        if (empty($loyaltyRev['ok'])) {
+            throw new RuntimeException((string)$loyaltyRev['error']);
         }
 
         // Phase 17 — ZIMRA credit note for exactly the processed lines/quantities (same transaction,

@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Production refund UI - Phase 8.2 authorisation + Phase 8.3 line-level / partial qty.
  * Phase 8.4 - voids / cancellation for safe uncompleted sales; committed -> refund path only.
@@ -7,7 +7,9 @@
  */
 require_once __DIR__ . '/includes/cash_controls.php';
 require_once __DIR__ . '/includes/sale_refund.php';
+require_once __DIR__ . '/includes/product_packs.php';
 require_once __DIR__ . '/includes/sale_cancel.php';
+require_once __DIR__ . '/includes/operator_scope.php';
 require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/ps_layout.php';
 
@@ -63,6 +65,12 @@ function psRefundUiLoadInvoiceLines(mysqli $conn, string $invoiceNumber): array
     return [];
 }
 
+function psRefundUiOwnRequest(mysqli $conn, int $requestId): bool
+{
+    $got = psRefundGetRequest($conn, $requestId);
+    return !empty($got['ok']) && psOperatorMayAccessRefundRequest($got['request']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$signedIn) {
         $error = 'Please sign in before using refunds.';
@@ -78,7 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cancelReason = strtoupper(trim((string)($_POST['cancel_reason'] ?? '')));
             $cancelReasonDescription = trim((string)($_POST['cancel_reason_description'] ?? ''));
             $confirm = trim((string)($_POST['cancel_confirm'] ?? ''));
-            if ($confirm !== 'CANCEL') {
+            if (!psOperatorMayRefundSale($conn, $invoice_number)) {
+                $error = 'The receipt was not found.';
+            } elseif ($confirm !== 'CANCEL') {
                 $error = 'Type CANCEL to confirm cancellation.';
                 $cancelInfo = psSaleCancelClassify($conn, $invoice_number, false);
             } else {
@@ -119,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         && !isset($_POST['approve_request']) && !isset($_POST['reject_request']) && !isset($_POST['process_request'])
         && !isset($_POST['cancel_sale'])) {
         $invoice_number = trim((string)$_POST['invoice_number']);
-        if ($invoice_number === '' || strlen($invoice_number) > 250) {
+        if ($invoice_number === '' || strlen($invoice_number) > 250 || !psOperatorMayRefundSale($conn, $invoice_number)) {
             $error = 'The receipt was not found.';
         } else {
             $cancelInfo = psSaleCancelClassify($conn, $invoice_number, false);
@@ -144,6 +154,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $payload = [
                 'reason' => $reason,
                 'reason_description' => $reason_description,
+                // 2026-11-05 split payment: how the money goes back (method + currency), chosen by the cashier
+                'refund_method' => (string)($_POST['refund_method'] ?? ''),
+                'refund_currency' => (string)($_POST['refund_currency'] ?? ''),
                 'source' => PS_REFUND_AUDIT_SOURCE_UI,
                 'amount' => $_POST['amount'] ?? '',
                 'total' => $_POST['total'] ?? '',
@@ -202,6 +215,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    } elseif ((isset($_POST['approve_request']) || isset($_POST['reject_request'])) && !$mayApprove
+        && !psRefundUiOwnRequest($conn, (int)($_POST['request_id'] ?? 0))) {
+        // A cashier's screen can only put their own requests in front of a supervisor.
+        $error = 'The refund request was not found.';
     } elseif (isset($_POST['approve_request'])) {
         // 2026-10-17: a cashier's screen — a supervisor types their own username + password to approve.
         $approver = $mayApprove ? ['ok' => true] : psCashControlsVerifyApprover($conn, (string)($_POST['approver_login'] ?? ''), (string)($_POST['approver_password'] ?? ''));
@@ -361,6 +378,9 @@ mysqli_close($conn);
             <div class="ps-card-content">
                 <div class="ps-meta">
                     Amount (display): <?php echo htmlspecialchars((string)$viewRequest['requested_amount'], ENT_QUOTES, 'UTF-8'); ?><br>
+                    <?php if (trim((string)($viewRequest['refund_method'] ?? '')) !== ''): // 2026-11-05 ?>
+                    Money back as: <?php echo htmlspecialchars(psPaymentMethodLabel((string)$viewRequest['refund_method']) . ' · ' . (string)($viewRequest['refund_currency'] ?? ''), ENT_QUOTES, 'UTF-8'); ?><br>
+                    <?php endif; ?>
                     Requester: <?php echo htmlspecialchars((string)$viewRequest['requester'], ENT_QUOTES, 'UTF-8'); ?>
                     at <?php echo htmlspecialchars((string)$viewRequest['requested_at'], ENT_QUOTES, 'UTF-8'); ?>
                     <?php if (!empty($viewRequest['approver'])): ?>
@@ -543,6 +563,39 @@ mysqli_close($conn);
                     </select>
                     <label class="ps-label" for="refund_reason_description">Description (required for Other)</label>
                     <textarea class="ps-input" id="refund_reason_description" name="reason_description"><?php echo htmlspecialchars($reason_description, ENT_QUOTES, 'UTF-8'); ?></textarea>
+                    <?php
+                    // 2026-11-05 split payment / split currency: show how the sale was paid; the cashier picks how the
+                    // money goes back (default: the sale's own method when paid one way, else cash; the sale currency).
+                    $rfPaid = psSaleTenderLines($conn, $invoice_number);
+                    $rfSaleMethod = psCashMovementSalePaymentMethod($conn, $invoice_number);
+                    $rfSaleM = (!empty($rfSaleMethod['ok']) && empty($rfSaleMethod['unknown'])) ? (string)$rfSaleMethod['method'] : '';
+                    $rfSnap = psFxSaleSnapshot($conn, $invoice_number);
+                    $rfSaleCur = (string)($rfSnap['currency'] ?? '') ?: 'USD';
+                    $rfDefM = ($rfSaleM !== '' && $rfSaleM !== 'SPLIT') ? $rfSaleM : 'CASH';
+                    $rfCurs = array_keys(psFxCompanyCurrencies($conn, trim((string)($_SESSION['the_company'] ?? ''))));
+                    if (!in_array($rfSaleCur, $rfCurs, true)) { array_unshift($rfCurs, $rfSaleCur); }
+                    ?>
+                    <div class="ps-meta">Paid with:
+                        <?php if ($rfPaid): ?>
+                            <?php echo htmlspecialchars(implode(' · ', array_map(static fn($t) => $t['label'] . ' ' . psFxFormat($conn, $t['amount'], $t['currency']), $rfPaid)), ENT_QUOTES, 'UTF-8'); ?>
+                        <?php else: ?>
+                            <?php echo htmlspecialchars($rfSaleM !== '' ? psPaymentMethodLabel($rfSaleM) . ' · ' . $rfSaleCur : 'Not recorded', ENT_QUOTES, 'UTF-8'); ?>
+                        <?php endif; ?>
+                    </div>
+                    <label class="ps-label" for="refund_method">Give the money back as</label>
+                    <select class="ps-input" id="refund_method" name="refund_method">
+                        <?php foreach (psPaymentMethods() as $mCode => $mLabel): if ($mCode === 'CREDIT' && $rfSaleM !== 'CREDIT') { continue; } ?>
+                            <option value="<?php echo htmlspecialchars($mCode, ENT_QUOTES, 'UTF-8'); ?>"<?php echo $mCode === $rfDefM ? ' selected' : ''; ?>><?php echo htmlspecialchars($mLabel, ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php if (count($rfCurs) > 1): ?>
+                    <label class="ps-label" for="refund_currency">In</label>
+                    <select class="ps-input" id="refund_currency" name="refund_currency">
+                        <?php foreach ($rfCurs as $cCode): ?>
+                            <option value="<?php echo htmlspecialchars($cCode, ENT_QUOTES, 'UTF-8'); ?>"<?php echo $cCode === $rfSaleCur ? ' selected' : ''; ?>><?php echo htmlspecialchars($cCode . ($cCode === $rfSaleCur ? ' (sale currency)' : ''), ENT_QUOTES, 'UTF-8'); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <?php endif; ?>
                     <input type="hidden" name="invoice_number" value="<?php echo htmlspecialchars($invoice_number, ENT_QUOTES, 'UTF-8'); ?>">
                     <input type="hidden" name="refund_submit_token" value="<?php echo htmlspecialchars($submitToken, ENT_QUOTES, 'UTF-8'); ?>">
                     <div class="ps-table-wrap">
@@ -570,7 +623,7 @@ mysqli_close($conn);
                                     ?>
                                     <tr data-unit-cents="<?php echo $unitCents !== null ? (int)$unitCents : ''; ?>" data-remaining="<?php echo htmlspecialchars($rem, ENT_QUOTES, 'UTF-8'); ?>">
                                         <td><?php echo htmlspecialchars((string)($sale['product'] ?? $sale['product_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                                        <td><?php echo htmlspecialchars($sold, ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td><?php echo htmlspecialchars($sold, ENT_QUOTES, 'UTF-8'); ?><?php if (!empty($sale['sell_unit'])): ?><div class="ps-muted" style="font-size:.85em">sold as <?php echo htmlspecialchars(psPackLineQtyText($sale), ENT_QUOTES, 'UTF-8'); ?> · refund in single units</div><?php endif; ?></td>
                                         <td><?php echo htmlspecialchars($prev, ENT_QUOTES, 'UTF-8'); ?></td>
                                         <td><?php echo htmlspecialchars($rem, ENT_QUOTES, 'UTF-8'); ?></td>
                                         <td><?php echo htmlspecialchars((string)$unit, ENT_QUOTES, 'UTF-8'); ?></td>

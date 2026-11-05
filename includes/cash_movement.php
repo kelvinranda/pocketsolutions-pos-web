@@ -870,6 +870,65 @@ function psCashMovementPostCashSale(
 }
 
 /**
+ * 2026-11-05 split payment / split currency: the cash side of a sale, one drawer per currency.
+ * $eval is psEvaluateTenders(); per currency, net = cash tendered in it - change given in it:
+ *  - net > 0: CASH_SALE into that currency's drawer;
+ *  - net < 0 (change given in a currency the customer did not pay cash in): CASH_OUT, reason "Change given".
+ * The movement types keep their fixed direction (amounts are never negative). The first row of the sale uses the plain
+ * invoice number as reference (as before); further currencies use "INVOICE~CUR", so each row stays unique.
+ * $saleFx: the sale's own snapshot, used for the sale currency so that row matches the sale exactly.
+ *
+ * @return array{ok:bool,error?:string}
+ */
+function psCashMovementPostSaleTenders(
+    mysqli $conn,
+    int $tillSessionId,
+    string $branch,
+    $invoiceNumber,
+    string $createdBy,
+    array $eval,
+    string $company,
+    string $saleCurrency,
+    ?array $saleFx = null,
+    string $movementAt = ''
+): array {
+    require_once __DIR__ . '/sale_payment.php';
+    require_once __DIR__ . '/currency.php';
+    $at = $movementAt !== '' ? $movementAt : date('Y-m-d H:i:s');
+    $invoice = (string)$invoiceNumber;
+    $used = [];
+    $nets = psTenderCashByCurrency($eval);
+    // sale currency first, so it takes the plain invoice reference
+    uksort($nets, static fn($a, $b) => ($a === $saleCurrency ? -1 : 0) - ($b === $saleCurrency ? -1 : 0));
+    foreach ($nets as $cur => $cents) {
+        $fx = ($cur === $saleCurrency && $saleFx) ? $saleFx : psFxSnapshot($conn, $company, $cur, $at);
+        if (empty($fx['ok']) && $fx !== $saleFx) {
+            return ['ok' => false, 'error' => 'No exchange rate for the ' . $cur . ' cash.'];
+        }
+        $type = $cents > 0 ? PS_CASH_MOV_CASH_SALE : PS_CASH_MOV_CASH_OUT;
+        $ref = isset($used[$type]) ? $invoice . '~' . $cur : $invoice;
+        $used[$type] = true;
+        $r = psCashMovementInsert($conn, [
+            'fx' => $fx,
+            'till_session_id' => $tillSessionId,
+            'branch' => $branch,
+            'movement_at' => $at,
+            'movement_type' => $type,
+            'amount' => psMoneyFromCents(abs($cents)),
+            'reference_type' => PS_CASH_REF_SALE,
+            'reference_id' => $ref,
+            'reason' => $cents > 0 ? 'Cash sale' : 'Change given',
+            'description' => ($cents > 0 ? 'Invoice ' : 'Change in ' . $cur . ', invoice ') . $invoice,
+            'created_by' => $createdBy,
+        ]);
+        if (empty($r['ok'])) {
+            return $r;
+        }
+    }
+    return ['ok' => true];
+}
+
+/**
  * CASH_REFUND when a production refund returns physical cash for a CASH-tendered sale.
  *
  * @return array{ok:bool,id?:int,error?:string}
@@ -1310,6 +1369,10 @@ function psCashMovementHistory(
     if ($tillSessionId < 1 || $branch === '' || !psEnsureCashMovementsSchema($conn)) {
         return ['ok' => false, 'error' => 'Cash movements could not be loaded.'];
     }
+    require_once __DIR__ . '/operator_scope.php';
+    if (psOperatorCashScoped() && !psOperatorOwnsSession($conn, $tillSessionId)) {
+        return ['ok' => true, 'rows' => []];
+    }
     $limit = max(1, min(500, $limit));
     $offset = max(0, $offset);
     $stmt = mysqli_prepare(
@@ -1386,11 +1449,20 @@ function psCashMovementListHistory(mysqli $conn, array $filters = []): array
     $limit = max(1, min(200, $limit));
     $offset = max(0, $offset);
     $sessionFilter = (int)($filters['till_session_id'] ?? 0);
+    // Till / supervisor: only movements they posted, on till sessions they own.
+    require_once __DIR__ . '/operator_scope.php';
+    $ownSql = '';
+    if (psOperatorCashScoped()) {
+        $ownSql = ' AND ' . psOperatorOwnSessionCondition($conn, 'till_session_id')
+            . ' AND ' . psOperatorPostedBySql($conn, ['created_by']);
+    }
 
     if ($allBranches && $sessionFilter < 1) {
+        require_once __DIR__ . '/product_master.php';
         $sql = 'SELECT id, till_session_id, branch, movement_at, movement_type, amount,' . (psFxHasColumn($conn, 'cash_movements', 'currency') ? ' currency,' : '') . '
                        reference_type, reference_id, reason, description, created_by, created_at
                 FROM cash_movements
+                WHERE ' . psCompanyBranchesInSql($conn, 'branch') . $ownSql . '
                 ORDER BY movement_at DESC, id DESC
                 LIMIT ? OFFSET ?';
         $stmt = mysqli_prepare($conn, $sql);
@@ -1402,7 +1474,7 @@ function psCashMovementListHistory(mysqli $conn, array $filters = []): array
         $sql = 'SELECT id, till_session_id, branch, movement_at, movement_type, amount,' . (psFxHasColumn($conn, 'cash_movements', 'currency') ? ' currency,' : '') . '
                        reference_type, reference_id, reason, description, created_by, created_at
                 FROM cash_movements
-                WHERE till_session_id = ? AND branch = ?
+                WHERE till_session_id = ? AND branch = ?' . $ownSql . '
                 ORDER BY movement_at DESC, id DESC
                 LIMIT ? OFFSET ?';
         $stmt = mysqli_prepare($conn, $sql);
@@ -1415,7 +1487,7 @@ function psCashMovementListHistory(mysqli $conn, array $filters = []): array
         $sql = 'SELECT id, till_session_id, branch, movement_at, movement_type, amount,' . (psFxHasColumn($conn, 'cash_movements', 'currency') ? ' currency,' : '') . '
                        reference_type, reference_id, reason, description, created_by, created_at
                 FROM cash_movements
-                WHERE branch = ?
+                WHERE branch = ?' . $ownSql . '
                 ORDER BY movement_at DESC, id DESC
                 LIMIT ? OFFSET ?';
         $stmt = mysqli_prepare($conn, $sql);
@@ -1454,9 +1526,13 @@ function psCashMovementSalePaymentMethod(mysqli $conn, string $invoiceNumber): a
     if ($invoiceNumber === '') {
         return ['ok' => false, 'error' => 'Invoice was not found.'];
     }
+    // 2026-11-05: a sale paid with several methods (split payment) is "SPLIT"; its refund method is chosen on the
+    // refund request (sale_refund_requests.refund_method). The change row (is_change = 1) is not a way it was paid.
+    $hasChangeCol = psFxHasColumn($conn, 'sale_payments', 'is_change');
     $stmt = mysqli_prepare(
         $conn,
-        'SELECT method FROM sale_payments WHERE invoice_number = ? ORDER BY id ASC LIMIT 1'
+        'SELECT DISTINCT UPPER(TRIM(method)) AS method FROM sale_payments WHERE invoice_number = ?'
+            . ($hasChangeCol ? ' AND is_change = 0' : '') . ' ORDER BY method'
     );
     if (!$stmt) {
         return ['ok' => false, 'error' => 'Payment method could not be read.'];
@@ -1464,13 +1540,16 @@ function psCashMovementSalePaymentMethod(mysqli $conn, string $invoiceNumber): a
     mysqli_stmt_bind_param($stmt, 's', $invoiceNumber);
     mysqli_stmt_execute($stmt);
     $result = mysqli_stmt_get_result($stmt);
-    $row = $result ? mysqli_fetch_assoc($result) : null;
+    $rows = $result ? mysqli_fetch_all($result, MYSQLI_ASSOC) : [];
     mysqli_stmt_close($stmt);
-    if (!$row) {
+    if (!$rows) {
         // Pre-sale_payments / legacy sales: cannot safely assume cash left the till.
         return ['ok' => true, 'method' => '', 'unknown' => true];
     }
-    return ['ok' => true, 'method' => strtoupper(trim((string)$row['method'])), 'unknown' => false];
+    if (count($rows) > 1) {
+        return ['ok' => true, 'method' => 'SPLIT', 'unknown' => false, 'methods' => array_column($rows, 'method')];
+    }
+    return ['ok' => true, 'method' => (string)$rows[0]['method'], 'unknown' => false];
 }
 
 /**

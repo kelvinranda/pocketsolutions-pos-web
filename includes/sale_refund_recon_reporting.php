@@ -291,7 +291,7 @@ function psSaleRefundReconReportFindingDetail(mysqli $conn, string $discrepancyK
         }
         $stmt = mysqli_prepare(
             $conn,
-            'SELECT id, invoice_number, product_id, branch, quantity, unit_price, revenue, status
+            'SELECT * /* 2026-10-28: incl. pack snapshot + tax for the refund amount rule */
              FROM online_sales WHERE invoice_number = ? ORDER BY id ASC LIMIT 200'
         );
         if ($stmt) {
@@ -310,7 +310,9 @@ function psSaleRefundReconReportFindingDetail(mysqli $conn, string $discrepancyK
         }
         $stmt = mysqli_prepare(
             $conn,
-            'SELECT method FROM sale_payments WHERE invoice_number = ? LIMIT 1'
+            // 2026-11-05: SPLIT when the sale was paid several ways (change rows are not a way it was paid)
+            "SELECT CASE WHEN COUNT(DISTINCT method) > 1 THEN 'SPLIT' ELSE MIN(method) END AS method
+             FROM sale_payments WHERE invoice_number = ?" . (psFxHasColumn($conn, 'sale_payments', 'is_change') ? ' AND is_change = 0' : '')
         );
         if ($stmt) {
             mysqli_stmt_bind_param($stmt, 's', $invoice);
@@ -494,6 +496,7 @@ function psSaleRefundReconReportExportCsv(mysqli $conn, array $rawFilters = []):
         'Description',
         'Qty expected',
         'Qty actual',
+        'Currency',
         'Amount expected',
         'Amount actual',
         'Recon status',
@@ -503,6 +506,17 @@ function psSaleRefundReconReportExportCsv(mysqli $conn, array $rawFilters = []):
         'Processed at',
     ];
     $lines = [];
+    // 2026-10-21: amounts of a finding are in its sale's currency (one transaction; never summed across currencies).
+    $curByInv = [];
+    $invs = array_values(array_unique(array_filter(array_map(fn($r) => (string)($r['invoice_number'] ?? ''), $all))));
+    if ($invs) {
+        require_once __DIR__ . '/currency.php';
+        $in = implode(',', array_map(fn($v) => "'" . mysqli_real_escape_string($conn, $v) . "'", $invs));
+        $cres = mysqli_query($conn, "SELECT invoice_number, currency FROM online_sales_ref WHERE invoice_number IN ($in)");
+        while ($cres && ($cr = mysqli_fetch_assoc($cres))) {
+            $curByInv[(string)$cr['invoice_number']] = psFxNormalizeCode($cr['currency'] ?? '') ?: (psFxLegacyCurrency() . ' (legacy)');
+        }
+    }
     foreach ($all as $row) {
         $sev = (string)($row['severity'] ?? '');
         $qtyExp = $row['qty_expected'] ?? null;
@@ -529,6 +543,7 @@ function psSaleRefundReconReportExportCsv(mysqli $conn, array $rawFilters = []):
             (string)($row['why'] ?? ''),
             $qtyExp === null || $qtyExp === '' ? PS_REFUND_RECON_REPORT_NA : (string)$qtyExp,
             $qtyAct === null || $qtyAct === '' ? PS_REFUND_RECON_REPORT_NA : (string)$qtyAct,
+            $curByInv[(string)($row['invoice_number'] ?? '')] ?? '',
             $amtExp === null || $amtExp === '' ? PS_REFUND_RECON_REPORT_NA : (string)$amtExp,
             $amtAct === null || $amtAct === '' ? PS_REFUND_RECON_REPORT_NA : (string)$amtAct,
             $sev === PS_REFUND_RECON_SEVERITY_INCONCLUSIVE

@@ -1025,6 +1025,7 @@ function psCustomerList(mysqli $conn, string $search = '', string $statusFilter 
     }
 
     // Linked sale counts only via customer_master_id (Phase 5.2/5.3 identity).
+    require_once __DIR__ . '/product_master.php'; // psCompanyBranchesInSql (2026-11-02)
     $sql = 'SELECT c.id, c.customer_code, c.first_name, c.last_name, c.business_name,
                    c.phone, c.email, c.address, c.customer_type, c.status, c.notes,
                    c.created_at, c.updated_at, c.created_by, c.updated_by,
@@ -1033,7 +1034,7 @@ function psCustomerList(mysqli $conn, string $search = '', string $statusFilter 
             LEFT JOIN (
                 SELECT customer_master_id, COUNT(*) AS linked_sale_count
                 FROM online_sales_ref
-                WHERE customer_master_id IS NOT NULL
+                WHERE customer_master_id IS NOT NULL AND ' . psCompanyBranchesInSql($conn, 'branch') . '
                 GROUP BY customer_master_id
             ) s ON s.customer_master_id = c.id
             WHERE ' . psCustomerCompanySql($conn, 'c');
@@ -1706,8 +1707,9 @@ function psCustomerSalesHistory(mysqli $conn, int $customerId, array $filters = 
                 FROM online_sales_ref r
                 LEFT JOIN (
                     SELECT invoice_number,
-                           MIN(method) AS payment_method,
-                           MIN(currency) AS payment_currency
+                           CASE WHEN COUNT(DISTINCT CASE WHEN is_change = 0 THEN UPPER(TRIM(method)) END) > 1 THEN \'SPLIT\'
+                                ELSE MIN(CASE WHEN is_change = 0 THEN method END) END AS payment_method,
+                           CASE WHEN COUNT(DISTINCT currency) > 1 THEN \'MIXED\' ELSE MIN(currency) END AS payment_currency
                     FROM sale_payments
                     GROUP BY invoice_number
                 ) sp ON sp.invoice_number = r.invoice_number

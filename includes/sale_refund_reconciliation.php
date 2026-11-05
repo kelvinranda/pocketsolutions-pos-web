@@ -625,6 +625,9 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $reqSql .= ' AND r.branch = ?';
         $types .= 's';
         $params[] = $branch;
+    } else {
+        // 2026-11-02: "all branches" = this company's branches only.
+        $reqSql .= ' AND ' . psCompanyBranchesInSql($conn, 'r.branch');
     }
     $saleRef = trim((string)($f['sale_ref'] ?? ''));
     if ($saleRef !== '') {
@@ -698,7 +701,7 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
     $saleLinesByInvoice = [];
     if ($invoices) {
         $in = psSaleRefundReconInList($conn, $invoices, false);
-        $sql = "SELECT id, invoice_number, product_id, branch, quantity, unit_price, revenue, status
+        $sql = "SELECT * /* 2026-10-28: incl. pack snapshot + tax for the refund amount rule */
                 FROM online_sales WHERE invoice_number IN ($in)";
         $res = mysqli_query($conn, $sql);
         while ($res && ($sl = mysqli_fetch_assoc($res))) {
@@ -716,10 +719,14 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
     $payByInvoice = [];
     if ($invoices) {
         $in = psSaleRefundReconInList($conn, $invoices, false);
-        $sql = "SELECT invoice_number, method FROM sale_payments WHERE invoice_number IN ($in)";
+        // 2026-11-05 split payment: several methods on one sale = SPLIT (the change row is not a way it was paid).
+        $hasChange = psFxHasColumn($conn, 'sale_payments', 'is_change');
+        $sql = "SELECT invoice_number, method FROM sale_payments WHERE invoice_number IN ($in)" . ($hasChange ? ' AND is_change = 0' : '');
         $res = mysqli_query($conn, $sql);
         while ($res && ($p = mysqli_fetch_assoc($res))) {
-            $payByInvoice[(string)$p['invoice_number']] = strtoupper(trim((string)$p['method']));
+            $inv = (string)$p['invoice_number'];
+            $m = strtoupper(trim((string)$p['method']));
+            $payByInvoice[$inv] = (isset($payByInvoice[$inv]) && $payByInvoice[$inv] !== $m) ? 'SPLIT' : $m;
         }
     }
 
@@ -729,7 +736,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $in = psSaleRefundReconInList($conn, $refundNumbers, false);
         $sql = "SELECT id, product_id, branch, quantity, reference_type, reference_id, movement_type, movement_at, notes
                 FROM stock_movements
-                WHERE movement_type = 'REFUND' AND reference_type = 'REFUND' AND reference_id IN ($in)";
+                WHERE movement_type = 'REFUND' AND reference_type = 'REFUND' AND reference_id IN ($in)
+                  AND " . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
         $res = mysqli_query($conn, $sql);
         while ($res && ($sm = mysqli_fetch_assoc($res))) {
             $ref = (string)$sm['reference_id'];
@@ -750,7 +758,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
                   AND (
                     (reference_type = 'REFUND' AND reference_id IN ($in))
                     OR (reference_type = 'REFUND_LINE')
-                  )";
+                  )
+                  AND " . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
         $res = mysqli_query($conn, $sql);
         while ($res && ($cm = mysqli_fetch_assoc($res))) {
             $ref = (string)$cm['reference_id'];
@@ -803,6 +812,10 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $reqLines = $linesByRequest[$rid] ?? [];
         $header = $saleHeaders[$inv] ?? null;
         $method = $payByInvoice[$inv] ?? '';
+        // 2026-11-05: when the cashier chose how the money went back, that is what the cash ledger must match.
+        if (trim((string)($req['refund_method'] ?? '')) !== '') {
+            $method = strtoupper(trim((string)$req['refund_method']));
+        }
         $methodKnown = $method !== '';
         $isCash = $methodKnown && $method === 'CASH';
 
@@ -1335,6 +1348,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $cancelSql .= ' AND branch = ?';
         $cTypes .= 's';
         $cParams[] = $branch;
+    } else {
+        $cancelSql .= ' AND ' . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
     }
     $cancelSql .= ' ORDER BY id DESC LIMIT 500';
     $cancelled = [];
@@ -1429,6 +1444,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
                   WHERE status = 'refunded'";
     if (!$allBranches) {
         $legacySql .= " AND branch = '" . mysqli_real_escape_string($conn, $branch) . "'";
+    } else {
+        $legacySql .= ' AND ' . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
     }
     $legacySql .= ' ORDER BY id DESC LIMIT 500';
     $legRes = mysqli_query($conn, $legacySql);
@@ -1467,6 +1484,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $unmatchedCashSql .= ' AND branch = ?';
         $ucTypes .= 's';
         $ucParams[] = $branch;
+    } else {
+        $unmatchedCashSql .= ' AND ' . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
     }
     $unmatchedCashSql .= ' ORDER BY id ASC LIMIT 1000';
     $ucStmt = mysqli_prepare($conn, $unmatchedCashSql);
@@ -1527,6 +1546,8 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
         $unmatchedStockSql .= ' AND branch = ?';
         $usTypes .= 's';
         $usParams[] = $branch;
+    } else {
+        $unmatchedStockSql .= ' AND ' . psCompanyBranchesInSql($conn, 'branch'); // 2026-11-02 company only
     }
     $unmatchedStockSql .= ' ORDER BY id ASC LIMIT 1000';
     $usStmt = mysqli_prepare($conn, $unmatchedStockSql);

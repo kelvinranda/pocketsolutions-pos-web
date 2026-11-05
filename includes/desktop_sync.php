@@ -19,6 +19,7 @@ require_once __DIR__ . '/stock_movement.php';
 require_once __DIR__ . '/product_master.php';
 require_once __DIR__ . '/cash_movement.php';
 require_once __DIR__ . '/tax.php';
+require_once __DIR__ . '/order_number.php';
 
 const PS_DT_PAIRING_HOURS = 24;
 const PS_DT_SOURCE = 'DESKTOP';
@@ -43,6 +44,7 @@ function psDtIssueKinds(): array
         'QUOTE' => 'Quotation was no longer open on the server',
         'FX_RATE' => 'Sold at a different exchange rate than the server',
         'FX_CURRENCY' => 'Sold in a currency no longer enabled',
+        'PAYMENT_DIFF' => 'Split payment change differs from the server',
         'REJECTED' => 'Event rejected — needs attention',
     ];
 }
@@ -379,17 +381,21 @@ function psDtCatalogue(mysqli $conn, array $till): array
 {
     require_once __DIR__ . '/barcode.php';
     require_once __DIR__ . '/catalog_setup.php';
+    $company = (string)$till['company_name'];
+    $branch = (string)$till['branch'];
     psEnsureGoodsStatus($conn);
     psEnsureGoodsBarcodeSchema($conn);
     psEnsureTaxModule($conn);
+    psTaxEnsureCompanyHasRates($conn, $company);
     psCatalogEnsureSchema($conn);
-    $company = (string)$till['company_name'];
-    $branch = (string)$till['branch'];
+    require_once __DIR__ . '/product_packs.php';
+    $packsOn = psPackEnsureSchema($conn);
+    $packsBy = $packsOn ? psPackListForCompany($conn, $company, true) : [];
 
     $stmt = mysqli_prepare(
         $conn,
         "SELECT product_id, product, price, button_category, category, pack_size, unit_of_measure, barcode, tax_code, status,
-                sell_by_measure, variant_group, variant_base, variant_label, cost_price
+                sell_by_measure, variant_group, variant_base, variant_label, cost_price" . ($packsOn ? ', base_unit' : '') . "
          FROM goods WHERE branch = ? AND (company_name = ? OR company_name IS NULL OR company_name = '')
          ORDER BY product, product_id"
     );
@@ -421,6 +427,10 @@ function psDtCatalogue(mysqli $conn, array $till): array
             'variant_base' => (string)($r['variant_base'] ?? ''),
             'variant_label' => (string)($r['variant_label'] ?? ''),
             'cost' => ($costCents !== null && $costCents > 0) ? psMoneyFromCents($costCents) : null,
+            // 2026-10-28 packs: base unit label and the packs (company base price; null = not sold, receive / count only).
+            'base_unit' => trim((string)($r['base_unit'] ?? '')),
+            'packs' => array_map(static fn ($p) => ['id' => $p['id'], 'name' => $p['name'], 'factor' => $p['factor'],
+                'price' => $p['price'], 'barcode' => $p['barcode']], $packsBy[(string)$r['product_id']] ?? []),
         ];
     }
     mysqli_stmt_close($stmt);
@@ -437,17 +447,27 @@ function psDtCatalogue(mysqli $conn, array $till): array
     }
 
     $taxRates = [];
-    $tr = mysqli_query($conn, 'SELECT code, description, classification, rate_percent, pricing_mode, effective_from, effective_to FROM tax_rates WHERE is_active = 1 ORDER BY code, effective_from');
-    while ($tr && ($r = mysqli_fetch_assoc($tr))) {
-        $taxRates[] = [
-            'code' => strtoupper((string)$r['code']),
-            'description' => (string)$r['description'],
-            'classification' => (string)$r['classification'],
-            'rate_percent' => number_format((float)$r['rate_percent'], 4, '.', ''),
-            'pricing_mode' => (string)$r['pricing_mode'],
-            'effective_from' => (string)$r['effective_from'],
-            'effective_to' => $r['effective_to'] === null ? null : (string)$r['effective_to'],
-        ];
+    $tr = mysqli_prepare(
+        $conn,
+        'SELECT code, description, classification, rate_percent, pricing_mode, effective_from, effective_to
+         FROM tax_rates WHERE is_active = 1 AND company_name = ? ORDER BY code, effective_from'
+    );
+    if ($tr) {
+        mysqli_stmt_bind_param($tr, 's', $company);
+        mysqli_stmt_execute($tr);
+        $trRes = mysqli_stmt_get_result($tr);
+        while ($trRes && ($r = mysqli_fetch_assoc($trRes))) {
+            $taxRates[] = [
+                'code' => strtoupper((string)$r['code']),
+                'description' => (string)$r['description'],
+                'classification' => (string)$r['classification'],
+                'rate_percent' => number_format((float)$r['rate_percent'], 4, '.', ''),
+                'pricing_mode' => (string)$r['pricing_mode'],
+                'effective_from' => (string)$r['effective_from'],
+                'effective_to' => $r['effective_to'] === null ? null : (string)$r['effective_to'],
+            ];
+        }
+        mysqli_stmt_close($tr);
     }
 
     $units = [];
@@ -461,7 +481,7 @@ function psDtCatalogue(mysqli $conn, array $till): array
     return [
         'till' => psDtPublicTill($till),
         'server_time' => date('Y-m-d H:i:s'),
-        'tax_enforcement' => psTaxGetEnforcement($conn),
+        'tax_enforcement' => psTaxGetEnforcement($conn, $company),
         // 2026-10-17: cash out by a Till user above this needs a supervisor sign-in on the till too.
         'cash_out_approval_limit' => (function () use ($conn, $till) {
             require_once __DIR__ . '/cash_controls.php';
@@ -469,6 +489,17 @@ function psDtCatalogue(mysqli $conn, array $till): array
         })(),
         // 2026-10-18: Till users may add new customers at the till (company switch on the Customers page).
         'till_add_customers' => psTillMayAddCustomers($conn, (string)$till['company_name']),
+        'picking_slip' => (function () use ($conn, $till) {
+            require_once __DIR__ . '/picking_slip.php';
+            return psPickingSlipEnabled($conn, (string)$till['company_name']);
+        })(),
+        // 2026-10-31: restaurant order numbers (the till numbers its own orders T01-001 … per till session).
+        'order_numbers' => psOrderNumbersEnabled($conn, (string)$till['company_name']),
+        // 2026-11-02: company role permissions {role: {key: bool}} (Role Permissions on the web).
+        'role_permissions' => (function () use ($conn, $till) {
+            require_once __DIR__ . '/role_permissions.php';
+            return psRolePermExport($conn, (string)$till['company_name']);
+        })(),
         'products' => $products,
         'button_groups' => $groups,
         'tax_rates' => $taxRates,
@@ -812,6 +843,10 @@ function psDtProcessEvent(mysqli $conn, array $till, array $ev): array
         psQuoteEnsureSchema($conn);
     }
     psDtWarmSchemas($conn);
+    if ($type === 'sale') {
+        require_once __DIR__ . '/product_packs.php';
+        psPackEnsureSchema($conn); // DDL before the transaction (pack lines)
+    }
     if (!mysqli_begin_transaction($conn)) {
         return ['client_uuid' => $uuid, 'status' => 'retry', 'error' => 'Server busy.'];
     }
@@ -978,8 +1013,11 @@ function psDtPushReprint(mysqli $conn, array $till, array $ev, string $uuid, arr
     if ($at === null || $invoice === '') {
         return ['status' => 'rejected', 'error' => 'Reprint time or receipt number is not valid.'];
     }
+    $approved = trim((string)($ev['approved_by'] ?? ''));
+    $doc = strtoupper(trim((string)($ev['document'] ?? 'RECEIPT')));
     psReceiptReprintLog($conn, $invoice, (string)$till['branch'], substr('desktop ' . $till['till_code'], 0, 20),
-        (string)$till['company_name'], trim((string)($ev['cashier_email'] ?? '')) ?: 'desktop', $at);
+        (string)$till['company_name'], trim((string)($ev['cashier_email'] ?? '')) ?: 'desktop', $at,
+        $approved !== '' ? $approved : null, $doc);
     return ['status' => 'ok', 'server_ref' => $invoice];
 }
 
@@ -1145,6 +1183,32 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
         if ($lineCents === null) {
             return ['status' => 'rejected', 'error' => 'Line ' . ($i + 1) . ' quantity must be greater than zero.'];
         }
+        // 2026-10-28 packs: a line sold in a pack carries its snapshot (pack, packs sold, units per pack, pack price).
+        // quantity stays in base units (packs × units per pack); the line amount is pack price × packs.
+        $packSnap = null;
+        if ((int)($l['pack_id'] ?? 0) > 0) {
+            $sq = trim((string)($l['sell_qty'] ?? ''));
+            $sf = trim((string)($l['sell_factor'] ?? ''));
+            $spC = psDecimalCents((string)($l['sell_price'] ?? ''));
+            $su = trim((string)($l['sell_unit'] ?? ''));
+            $sqM = preg_match('/^\d{1,9}(\.\d{1,3})?$/', $sq) ? psStockMilli($sq) : null;
+            $sfM = preg_match('/^\d{1,9}(\.\d{1,3})?$/', $sf) ? psStockMilli($sf) : null;
+            if ($su === '' || strlen($su) > 40 || $spC === null || !$sqM || !$sfM || $sqM <= 0 || $sfM <= 0 || $sqM % 1000 !== 0) {
+                return ['status' => 'rejected', 'error' => 'Line ' . ($i + 1) . ' pack details are not valid (whole packs only).'];
+            }
+            if ((int)psStockMilli($qtyRaw) !== intdiv($sqM, 1000) * $sfM) {
+                return ['status' => 'rejected', 'error' => 'Line ' . ($i + 1) . ' quantity is not packs × units per pack.'];
+            }
+            $packLine = psLineCents($spC, $sq);
+            if ($packLine === null) {
+                return ['status' => 'rejected', 'error' => 'Line ' . ($i + 1) . ' pack price is not valid.'];
+            }
+            $lineCents = $packLine;
+            $baseMilli = (int)psStockMilli($qtyRaw);
+            $unit = intdiv(psFxRoundCentsToDecimals($packLine, $fxDec) * 1000 * 2 + $baseMilli, 2 * $baseMilli); // per base unit, display only
+            $packSnap = ['pack_id' => (int)$l['pack_id'], 'sell_unit' => $su, 'sell_qty' => psPackQtyText($sqM), 'sell_factor' => psStockQtyPlain(psMilliToStock($sfM)),
+                'sell_price' => psMoneyFromCents($spC), 'pre_cents' => $packLine];
+        }
         $taxCode = strtoupper(trim((string)($l['tax_code'] ?? '')));
         $complete = $taxCode !== '';
         if ($complete) {
@@ -1184,7 +1248,7 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
             'line_total_excl' => $complete ? (string)$l['line_total_excl'] : null,
             'line_total_incl' => $complete ? (string)$l['line_total_incl'] : null,
             'tax_data_status' => $complete ? PS_TAX_STATUS_COMPLETE : PS_TAX_STATUS_UNCONFIGURED,
-        ];
+        ] + ($packSnap ?? []);
     }
     $totalCents = psDecimalCents((string)($ev['total'] ?? ''));
     if ($totalCents === null || $totalCents !== $sumCents) {
@@ -1246,13 +1310,37 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
             $issues[] = ['kind' => 'CREDIT_RULE', 'till_ref' => $tillInvoice, 'detail' => $customerName . ': ' . (string)($check['error'] ?? 'credit check failed') . ' (sale kept, account charged).', 'till_value' => psMoneyFromCents($totalCents), 'occurred_at' => $soldAt];
         }
     }
-    $payment = psEvaluatePayment($totalCents, (string)($pay['amount_paid'] ?? ''), $method, (string)($pay['reference'] ?? ''), $saleCurrency);
-    if (!$payment['ok']) {
-        return ['status' => 'rejected', 'error' => (string)$payment['error']];
-    }
-    $tillChange = psDecimalCents((string)($pay['change'] ?? '0'));
-    if ($tillChange !== null && $tillChange !== (int)$payment['change_cents']) {
-        return ['status' => 'rejected', 'error' => 'Change given does not match amount paid minus total.'];
+    // 2026-11-05 split payment / split currency: a till sale paid several ways sends `payments` (each in its own currency)
+    // and the change currency; the server checks them with the same rules as the web till (psEvaluateTenders). The sale was
+    // made, so a difference in the change (e.g. a rate changed after the till last synced) is reported, not refused.
+    $tenderEval = null;
+    if (is_array($ev['payments'] ?? null) && $ev['payments']) {
+        $tenderEval = psEvaluateTenders($conn, $company, $saleCurrency, $totalCents, psTendersFromRequest($ev, $saleCurrency),
+            (string)($ev['change_currency'] ?? ''), $soldAt);
+        if (empty($tenderEval['ok'])) {
+            return ['status' => 'rejected', 'error' => (string)$tenderEval['error']];
+        }
+        $tillChangeAmt = psDecimalCents((string)($ev['change_amount'] ?? '0'));
+        $srvChange = (int)($tenderEval['change']['amount_cents'] ?? 0);
+        if ($tillChangeAmt !== null && $tillChangeAmt !== $srvChange) {
+            $issues[] = ['kind' => 'PAYMENT_DIFF', 'till_ref' => $tillInvoice, 'detail' => 'The till gave change of ' . psMoneyFromCents($tillChangeAmt) . ' '
+                . (string)($ev['change_currency'] ?? $saleCurrency) . '; the server works it out as ' . psMoneyFromCents($srvChange) . '.',
+                'till_value' => psMoneyFromCents($tillChangeAmt), 'server_value' => psMoneyFromCents($srvChange), 'occurred_at' => $soldAt];
+        }
+        $changeSale = (int)($tenderEval['change']['sale_cents'] ?? 0);
+        $payment = ['ok' => true, 'method' => 'SPLIT', 'method_label' => 'Split payment',
+            'amount_paid' => psMoneyFromCents((int)$tenderEval['paid_sale_cents']), 'change_amount' => psMoneyFromCents($changeSale),
+            'amount_cents' => (int)$tenderEval['paid_sale_cents'], 'change_cents' => $changeSale, 'total_cents' => $totalCents,
+            'currency' => $saleCurrency, 'reference' => '', 'is_credit' => false];
+    } else {
+        $payment = psEvaluatePayment($totalCents, (string)($pay['amount_paid'] ?? ''), $method, (string)($pay['reference'] ?? ''), $saleCurrency);
+        if (!$payment['ok']) {
+            return ['status' => 'rejected', 'error' => (string)$payment['error']];
+        }
+        $tillChange = psDecimalCents((string)($pay['change'] ?? '0'));
+        if ($tillChange !== null && $tillChange !== (int)$payment['change_cents']) {
+            return ['status' => 'rejected', 'error' => 'Change given does not match amount paid minus total.'];
+        }
     }
 
     // 2026-10-17: sale made from a quotation (server id, or the till's uuid for a quote made on the till).
@@ -1292,7 +1380,21 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
             if ($serverCents !== null) {
                 $serverCents = psFxFromBaseCents($conn, $fxSnap, $serverCents); // compare in the sale currency
             }
-            if ($serverCents !== null && $serverCents !== $line['unit_cents'] && ($quotePrices[$pid] ?? null) !== $line['unit_cents']) {
+            if (!empty($line['pack_id'])) {
+                // Pack line: compare the pack price with the server's pack (report, never change).
+                $sPack = psPackGet($conn, $company, (int)$line['pack_id']);
+                $tillPack = (int)psDecimalCents($line['sell_price']);
+                if (!$sPack || $sPack['product_id'] !== (string)$pid) {
+                    $issues[] = ['kind' => 'PRICE_DIFF', 'till_ref' => $tillInvoice, 'product_id' => $pid, 'detail' => $line['product'] . ' sold as ' . $line['sell_unit'] . ', a pack the server does not have.',
+                        'till_value' => $line['sell_price'], 'server_value' => 'no pack', 'occurred_at' => $soldAt];
+                } else {
+                    $sp = $sPack['price'] !== null ? psFxFromBaseCents($conn, $fxSnap, (int)psDecimalCents((string)$sPack['price'])) : null;
+                    if ($sp !== $tillPack || psStockMilli($sPack['factor']) !== psStockMilli($line['sell_factor'])) {
+                        $issues[] = ['kind' => 'PRICE_DIFF', 'till_ref' => $tillInvoice, 'product_id' => $pid, 'detail' => $line['product'] . ' (' . $line['sell_unit'] . ' of ' . $line['sell_factor'] . ') sold at the till pack price.',
+                            'till_value' => $line['sell_price'], 'server_value' => ($sp !== null ? psMoneyFromCents($sp) : 'not sold') . ' (' . $sPack['factor'] . ' per pack' . (!$sPack['active'] ? ', hidden' : '') . ')', 'occurred_at' => $soldAt];
+                    }
+                }
+            } elseif ($serverCents !== null && $serverCents !== $line['unit_cents'] && ($quotePrices[$pid] ?? null) !== $line['unit_cents']) {
                 $issues[] = ['kind' => 'PRICE_DIFF', 'till_ref' => $tillInvoice, 'product_id' => $pid, 'detail' => $line['product'] . ' sold at the till price.',
                     'till_value' => $line['price'], 'server_value' => psMoneyFromCents($serverCents), 'occurred_at' => $soldAt];
             }
@@ -1301,9 +1403,9 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
                 $issues[] = ['kind' => 'TAX_DIFF', 'till_ref' => $tillInvoice, 'product_id' => $pid, 'detail' => $line['product'] . ' tax code differs.',
                     'till_value' => (string)($line['tax_code'] ?? '(none)'), 'server_value' => $serverTax !== '' ? $serverTax : '(none)', 'occurred_at' => $soldAt];
             } elseif ($serverTax !== '') {
-                $rate = psTaxResolveEffectiveRate($conn, $serverTax, $saleDate);
+                $rate = psTaxResolveEffectiveRate($conn, $serverTax, $saleDate, $company);
                 if ($rate['ok']) {
-                    $calc = psTaxComputeLine($rate['rate'], (int)psLineCents($line['unit_cents'], $line['quantity']));
+                    $calc = psTaxComputeLine($rate['rate'], (int)($line['pre_cents'] ?? psLineCents($line['unit_cents'], $line['quantity'])));
                     if ($calc['ok'] && ($calc['tax_amount'] !== psMoneyFromCents((int)psDecimalCents((string)$line['tax_amount'])) || $calc['line_total_incl'] !== $line['revenue'])) {
                         $issues[] = ['kind' => 'TAX_DIFF', 'till_ref' => $tillInvoice, 'product_id' => $pid, 'detail' => $line['product'] . ' tax amount differs from the server rate.',
                             'till_value' => (string)$line['tax_amount'], 'server_value' => (string)$calc['tax_amount'], 'occurred_at' => $soldAt];
@@ -1343,6 +1445,11 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
     }
     $headerId = (int)mysqli_insert_id($conn);
     mysqli_stmt_close($stmt);
+    // 2026-10-31: the till's own order number (T01-007), kept as sent; older tills send none.
+    $tillOrderNo = psOrderNumberClean($ev['order_no'] ?? '');
+    if ($tillOrderNo !== null && psOrderNumberEnsureSchema($conn) && !psOrderNumberSave($conn, $invStr, $tillOrderNo)) {
+        return ['status' => 'retry', 'error' => 'Sale header could not be saved.'];
+    }
     if (psFxHasColumn($conn, 'online_sales_ref', 'currency')) {
         $v = psFxSnapshotSqlValues($conn, $fxSnap);
         $bt = psFxCentsToMoney(psFxToBaseCents($conn, $fxSnap, $totalCents));
@@ -1360,7 +1467,13 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
              taxable_amount, tax_amount, line_total_excl, line_total_incl, tax_data_status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
+    require_once __DIR__ . '/product_packs.php';
+    $packCols = psPackEnsureSchema($conn);
     foreach ($lines as $line) {
+        if (!empty($line['pack_id']) && !$packCols) {
+            mysqli_stmt_close($lineStmt);
+            return ['status' => 'retry', 'error' => 'Pack columns are not available on the server yet.'];
+        }
         $cost = $line['cost_price'] ?? '0';
         mysqli_stmt_bind_param($lineStmt, 'sssssssssssssssssssss', $invStr, $line['product_id'], $line['product'], $line['quantity'], $line['revenue'],
             $line['price'], $cost, $saleDate, $customerName, $email, $branch, $line['tax_code'], $line['tax_classification'], $line['tax_rate_percent'],
@@ -1370,24 +1483,46 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
             mysqli_stmt_close($lineStmt);
             return ['status' => 'retry', 'error' => 'Sale line could not be saved.'];
         }
+        if (!empty($line['pack_id'])) {
+            $lid = (int)mysqli_insert_id($conn);
+            $pu = mysqli_prepare($conn, 'UPDATE online_sales SET sell_unit = ?, sell_qty = ?, sell_factor = ?, sell_price = ?, pack_id = ? WHERE id = ?');
+            $pk = (int)$line['pack_id'];
+            $okPack = $pu && mysqli_stmt_bind_param($pu, 'ssssii', $line['sell_unit'], $line['sell_qty'], $line['sell_factor'], $line['sell_price'], $pk, $lid)
+                && mysqli_stmt_execute($pu);
+            if ($pu) {
+                mysqli_stmt_close($pu);
+            }
+            if (!$okPack) {
+                mysqli_stmt_close($lineStmt);
+                return ['status' => 'retry', 'error' => 'Sale line pack could not be saved.'];
+            }
+        }
     }
     mysqli_stmt_close($lineStmt);
 
     $token = 'D' . str_replace('-', '', $uuid); // unique per sale; reuses the web double-submit guard
     $ref = $payment['reference'] === '' ? null : $payment['reference'];
     $cashierId = $cashier ? (int)$cashier['id'] : null;
-    $payStmt = mysqli_prepare(
-        $conn,
-        'INSERT INTO sale_payments (invoice_number, method, amount_paid, change_amount, currency, reference, cashier_id, cashier_email, till_session_id, created_at, payment_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    );
-    mysqli_stmt_bind_param($payStmt, 'ssssssisiss', $invStr, $payment['method'], $payment['amount_paid'], $payment['change_amount'], $payment['currency'],
-        $ref, $cashierId, $email, $sessionId, $soldAt, $token);
-    if (!mysqli_stmt_execute($payStmt)) {
+    if ($tenderEval !== null) {
+        // 2026-11-05: one row per payment (+ the change row), tokens D…-1, D…-2, D…-C
+        if (!psInsertSaleTenders($conn, $invStr, $tenderEval, ['cashier_id' => $cashierId, 'cashier_email' => $email,
+            'till_session_id' => $sessionId, 'created_at' => $soldAt], $token)) {
+            return ['status' => 'retry', 'error' => 'Payment could not be saved.'];
+        }
+    } else {
+        $payStmt = mysqli_prepare(
+            $conn,
+            'INSERT INTO sale_payments (invoice_number, method, amount_paid, change_amount, currency, reference, cashier_id, cashier_email, till_session_id, created_at, payment_token)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        mysqli_stmt_bind_param($payStmt, 'ssssssisiss', $invStr, $payment['method'], $payment['amount_paid'], $payment['change_amount'], $payment['currency'],
+            $ref, $cashierId, $email, $sessionId, $soldAt, $token);
+        if (!mysqli_stmt_execute($payStmt)) {
+            mysqli_stmt_close($payStmt);
+            return ['status' => 'retry', 'error' => 'Payment could not be saved.'];
+        }
         mysqli_stmt_close($payStmt);
-        return ['status' => 'retry', 'error' => 'Payment could not be saved.'];
     }
-    mysqli_stmt_close($payStmt);
 
     if (!mysqli_query($conn, "UPDATE online_sales_ref SET status = 'COMPLETED' WHERE id = $headerId AND status = ''") || mysqli_affected_rows($conn) !== 1) {
         return ['status' => 'retry', 'error' => 'Sale could not be completed.'];
@@ -1428,7 +1563,16 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
             return ['status' => 'retry', 'error' => 'Account ledger could not be posted: ' . ($ledger['error'] ?? '')];
         }
     }
-    if ($payment['method'] === 'CASH') {
+    if ($tenderEval !== null) {
+        // 2026-11-05: cash per drawer currency (cash paid in it minus change given in it)
+        if (psTenderCashByCurrency($tenderEval)) {
+            $cash = psCashMovementPostSaleTenders($conn, $sessionId, $branch, $invStr, $email !== '' ? $email : 'desktop', $tenderEval,
+                $company, $saleCurrency, $fxSnap, $soldAt);
+            if (empty($cash['ok'])) {
+                return ['status' => 'retry', 'error' => 'Cash movement could not be saved.'];
+            }
+        }
+    } elseif ($payment['method'] === 'CASH') {
         $cash = psCashMovementPostCashSale($conn, $sessionId, $branch, $total, $invStr, $email !== '' ? $email : 'desktop', $soldAt, $fxSnap);
         if (empty($cash['ok'])) {
             return ['status' => 'retry', 'error' => 'Cash movement could not be saved.'];
@@ -1618,6 +1762,12 @@ function psDtPushRefund(mysqli $conn, array $till, array $ev, string $uuid, arra
         $rfBase = psFxCentsToMoney(psFxToBaseCents($conn, $rfSnap, (int)psFxMoneyToCents((string)$amount)));
         $rfCur = (string)$rfSnap['currency'];
         mysqli_query($conn, "UPDATE sale_refund_requests SET currency = '" . mysqli_real_escape_string($conn, $rfCur) . "', base_amount = '" . $rfBase . "' WHERE id = " . $requestId);
+        // 2026-11-05: how the money went back (the till's choice), so reports and accounting follow it like a web refund.
+        if (psEnsureSaleRefundRequestsSchema($conn) && psFxHasColumn($conn, 'sale_refund_requests', 'refund_method')) {
+            $rfM = mysqli_real_escape_string($conn, $method);
+            $rfC = mysqli_real_escape_string($conn, strtoupper(trim((string)($ev['refund_currency'] ?? ''))) ?: $rfCur);
+            mysqli_query($conn, "UPDATE sale_refund_requests SET refund_method = '$rfM', refund_currency = '$rfC' WHERE id = " . $requestId);
+        }
     }
 
     $lineStmt = mysqli_prepare(
@@ -1684,9 +1834,21 @@ function psDtPushRefund(mysqli $conn, array $till, array $ev, string $uuid, arra
     $cashId = null;
     if ($sessionId !== null) {
         // Multi-currency: cash back in the sale's currency at the sale's rate.
-        $cash = psCashMovementPostCashRefund($conn, $sessionId, $branch, $amount, PS_CASH_REF_REFUND, $refundNumber, $processor,
-            'Cash refund ' . $refundNumber . ' (desktop ' . $tillRefund . ') invoice ' . $invoice, $processedAt,
-            psFxSaleSnapshot($conn, (string)$invoice, (string)$till['company_name']));
+        // 2026-11-05: or in the currency the cashier picked on the till (refund_currency + the cash amount it gave).
+        $cashFx = psFxSaleSnapshot($conn, (string)$invoice, (string)$till['company_name']);
+        $cashAmt = $amount;
+        $rfSaleCur = (string)($cashFx['currency'] ?? '');
+        $rfPick = strtoupper(trim((string)($ev['refund_currency'] ?? '')));
+        if ($rfPick !== '' && $rfPick !== (string)($cashFx['currency'] ?? '') && psDecimalCents((string)($ev['cash_amount'] ?? '')) !== null) {
+            $cashAmt = psMoneyFromCents((int)psDecimalCents((string)$ev['cash_amount']));
+            $cashFx = psFxSnapshot($conn, (string)$till['company_name'], $rfPick, $processedAt);
+            if (empty($cashFx['ok'])) {
+                return ['status' => 'rejected', 'error' => 'No exchange rate for the ' . $rfPick . ' cash refund.'];
+            }
+        }
+        $cash = psCashMovementPostCashRefund($conn, $sessionId, $branch, $cashAmt, PS_CASH_REF_REFUND, $refundNumber, $processor,
+            'Cash refund ' . $refundNumber . ' (desktop ' . $tillRefund . ') invoice ' . $invoice . ($cashAmt !== $amount ? ' (' . $amount . ' ' . $rfSaleCur . ' given as ' . $cashAmt . ' ' . $rfPick . ')' : ''), $processedAt,
+            $cashFx);
         if (empty($cash['ok'])) {
             return ['status' => 'retry', 'error' => 'The cash refund could not be saved.'];
         }
@@ -2015,6 +2177,7 @@ function psDtWarmSchemas(mysqli $conn): void
     psEnsureGoodsTaxCodeColumn($conn);
     psEnsureTaxModule($conn);
     tillEnsureSchema($conn);
+    psOrderNumberEnsureSchema($conn);
     psEnsureSaleIntegritySchema($conn);
     stockMovementEnsureSchema($conn);
     psEnsureCashMovementModule($conn);

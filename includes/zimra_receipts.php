@@ -360,7 +360,7 @@ function psZimraIssueForSale(mysqli $conn, string $invoiceNumber, string $branch
     }
     $lines = psZimraQuery(
         $conn,
-        'SELECT id, product, quantity, unit_price, revenue, tax_code FROM online_sales WHERE invoice_number = ? AND branch = ? ORDER BY id',
+        'SELECT * FROM online_sales WHERE invoice_number = ? AND branch = ? ORDER BY id',
         'ss',
         [$invoiceNumber, $branch]
     ) ?? [];
@@ -384,7 +384,13 @@ function psZimraIssueForSale(mysqli $conn, string $invoiceNumber, string $branch
         if ($unit === '' || !is_numeric($unit)) {
             $unit = (string)((float)$l['revenue'] / max((float)$l['quantity'], 0.001));
         }
-        $zl = psZimraLineFor((string)$l['product'], (string)$l['quantity'], $unit, (string)$l['revenue']);
+        if (!empty($l['sell_unit']) && is_numeric($l['sell_qty'] ?? null) && is_numeric($l['sell_price'] ?? null)) {
+            // 2026-10-28: sold in a pack — the fiscal line is in packs at the pack price ("Sugar 2kg (pack of 10)").
+            $zl = psZimraLineFor((string)$l['product'] . ' (' . $l['sell_unit'] . ' of ' . rtrim(rtrim(number_format((float)$l['sell_factor'], 3, '.', ''), '0'), '.') . ')',
+                (string)$l['sell_qty'], (string)$l['sell_price'], (string)$l['revenue']);
+        } else {
+            $zl = psZimraLineFor((string)$l['product'], (string)$l['quantity'], $unit, (string)$l['revenue']);
+        }
         $zl += [
             'taxId' => (int)$tax['tax_id'],
             'taxPercent' => $tax['tax_percent'] === null ? null : (float)$tax['tax_percent'],
@@ -395,12 +401,48 @@ function psZimraIssueForSale(mysqli $conn, string $invoiceNumber, string $branch
         $total += psZimraMoney($zl['quantity'] * $zl['unitPrice']);
         $map[] = ['sale_line_id' => (int)$l['id'], 'line_no' => $i + 1, 'tax_id' => $zl['taxId'], 'tax_percent' => $zl['taxPercent'], 'tax_code' => $zl['taxCode']];
     }
+    // 2026-11-05 split payment / split currency: the receipt is in the SALE currency (from the sale header; the last
+    // payment row can be the change row in another currency). One fiscal payment per tender, valued in the sale
+    // currency (sale_amount); change is taken off the cash tenders; the payments then sum exactly to the receipt total.
+    $hdr = psZimraOne($conn, 'SELECT currency FROM online_sales_ref WHERE invoice_number = ? LIMIT 1', 's', [$invoiceNumber]);
+    $receiptCur = strtoupper(trim((string)($hdr['currency'] ?? ''))) ?: strtoupper((string)($pay['currency'] ?: 'USD'));
+    $tenderRows = psZimraQuery($conn, 'SELECT method, amount_paid, change_amount, sale_amount, is_change FROM sale_payments
+        WHERE invoice_number = ? ORDER BY tender_seq IS NULL, tender_seq, id', 's', [$invoiceNumber]) ?? [];
+    $byType = [];
+    $changeLeft = 0.0;
+    foreach ($tenderRows as $tr) {
+        $val = $tr['sale_amount'] !== null ? (float)$tr['sale_amount'] : (float)$tr['amount_paid'] - (float)$tr['change_amount'];
+        if ((int)$tr['is_change'] === 1) {
+            $changeLeft += $val;
+            continue;
+        }
+        $type = psZimraMoneyTypeForMethod((string)$tr['method']);
+        $byType[$type] = ($byType[$type] ?? 0.0) + $val;
+    }
+    if ($changeLeft > 0 && isset($byType['Cash'])) {
+        $byType['Cash'] -= $changeLeft;
+    }
+    $payments = [];
+    foreach ($byType as $type => $amt) {
+        if (psZimraMoney($amt) > 0) {
+            $payments[] = [$type, psZimraMoney($amt)];
+        }
+    }
+    if (!$payments) {
+        $payments = [[psZimraMoneyTypeForMethod((string)$pay['method']), psZimraMoney($total)]];
+    }
+    // Rounding: the fiscal lines can differ from the stored tenders by a cent; the largest payment takes the difference.
+    $sumPay = array_sum(array_map(static fn($p) => $p[1], $payments));
+    if (abs($sumPay - $total) > 0.0001) {
+        usort($payments, static fn($a, $b) => $b[1] <=> $a[1]);
+        $payments[0][1] = psZimraMoney($payments[0][1] + ($total - $sumPay));
+    }
     return psZimraIssue($conn, (int)$device['id'], [
         'receiptType' => 'FiscalInvoice',
-        'currency' => strtoupper((string)($pay['currency'] ?: 'USD')),
+        'currency' => $receiptCur,
         'invoiceNo' => $invoiceNumber,
         'lines' => $zLines,
-        'payments' => [[psZimraMoneyTypeForMethod((string)$pay['method']), psZimraMoney($total)]],
+        'payments' => $payments,
         'source_type' => 'SALE',
         'source_ref' => $invoiceNumber,
         'invoice_number' => $invoiceNumber,

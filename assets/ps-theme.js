@@ -58,17 +58,43 @@
       var label = link.textContent.toLowerCase();
       link.style.display = needle && label.indexOf(needle) === -1 ? "none" : "";
     });
-    // Hide a group heading when none of its links match.
-    document.querySelectorAll(".ps-nav .ps-nav-group").forEach(function (head) {
+    // Sections: while searching, show only sections with a match, opened; afterwards, back to how they were.
+    document.querySelectorAll(".ps-nav .ps-nav-sec").forEach(function (sec) {
       var any = false;
-      var el = head.nextElementSibling;
-      while (el && !el.classList.contains("ps-nav-group")) {
-        if (el.tagName === "A" && el.style.display !== "none") any = true;
-        el = el.nextElementSibling;
-      }
-      head.style.display = any ? "" : "none";
+      sec.querySelectorAll("a").forEach(function (a) { if (a.style.display !== "none") any = true; });
+      sec.style.display = needle && !any ? "none" : "";
+      if (needle) setSecOpen(sec, any, false);
+      else setSecOpen(sec, sec.getAttribute("data-ps-current") === "1" || savedOpen(sec), false);
     });
   }
+
+  // 2026-11-03: sidebar sections open and close like dropdowns; the choice is remembered on this browser.
+  var NAV_KEY = "ps-nav-open";
+  function navState() {
+    try { return JSON.parse(localStorage.getItem(NAV_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function savedOpen(sec) {
+    return navState()[sec.getAttribute("data-ps-sec")] === 1;
+  }
+  function setSecOpen(sec, open, remember) {
+    sec.classList.toggle("is-open", open);
+    var btn = sec.querySelector("[data-ps-sec-toggle]");
+    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (remember) {
+      var st = navState();
+      if (open) st[sec.getAttribute("data-ps-sec")] = 1; else delete st[sec.getAttribute("data-ps-sec")];
+      try { localStorage.setItem(NAV_KEY, JSON.stringify(st)); } catch (e) {}
+    }
+  }
+  document.querySelectorAll(".ps-nav .ps-nav-sec").forEach(function (sec) {
+    if (sec.getAttribute("data-ps-current") !== "1" && savedOpen(sec)) setSecOpen(sec, true, false);
+  });
+  document.addEventListener("click", function (event) {
+    var btn = event.target.closest("[data-ps-sec-toggle]");
+    if (!btn) return;
+    var sec = btn.closest(".ps-nav-sec");
+    if (sec) setSecOpen(sec, !sec.classList.contains("is-open"), true);
+  });
 
   function productText(row) {
     var marked = row.getAttribute("data-ps-product");
@@ -224,6 +250,10 @@
   function openSelectPanel(state) {
     if (state.trigger.disabled) return;
     if (openSelect && openSelect !== state) closeSelect();
+    // A modal <dialog> sits in the top layer and makes the rest of the page inert,
+    // so the panel must live inside the dialog to render above it and receive clicks.
+    var host = state.wrap.closest("dialog[open]") || document.body;
+    if (state.panel.parentNode !== host) host.appendChild(state.panel);
     state.render();
     openSelect = state;
     state.trigger.setAttribute("aria-expanded", "true");
@@ -420,9 +450,17 @@
   }
 
   function enhanceSelects() {
-    if (!document.body || !document.body.classList.contains("ps-app")) return;
+    if (!document.body) return;
+    // 2026-11-05: the till's payment sheet uses the same modern dropdown (split payment rows are enhanced as they are
+    // added, through window.psEnhanceSelect).
+    if (document.body.classList.contains("ps-pos")) {
+      document.querySelectorAll("body.ps-pos .pay-sheet select").forEach(enhanceSelect);
+      return;
+    }
+    if (!document.body.classList.contains("ps-app")) return;
     document.querySelectorAll("body.ps-app select").forEach(enhanceSelect);
   }
+  window.psEnhanceSelect = enhanceSelect;
 
   document.addEventListener("click", function (event) {
     if (!openSelect) return;
@@ -442,6 +480,10 @@
   window.addEventListener("resize", function () {
     if (openSelect) placeSelect(openSelect);
   });
+
+  document.addEventListener("close", function (event) {
+    if (openSelect && event.target && event.target.contains && event.target.contains(openSelect.wrap)) closeSelect();
+  }, true);
 
   window.addEventListener("scroll", function (event) {
     if (!openSelect) return;
@@ -696,4 +738,38 @@
   } else {
     bootTheme();
   }
+})();
+
+/* 2026-10-21 Currency tooltips in reports (includes/fx_report.php): hover and keyboard focus are CSS;
+   click / tap toggles (touch screens), Escape or a click elsewhere closes. Keeps the tip inside the window. */
+(function () {
+  function place(el) {
+    var tip = el.querySelector(".fxa-tip");
+    if (!tip) return;
+    el.classList.remove("tip-left");
+    var r = el.getBoundingClientRect();
+    if (r.right - 360 < 8) el.classList.add("tip-left");
+  }
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-fx-tip]") : null;
+    document.querySelectorAll("[data-fx-tip].open").forEach(function (o) { if (o !== el) o.classList.remove("open"); });
+    if (el) { place(el); el.classList.toggle("open"); }
+  });
+  document.addEventListener("keydown", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-fx-tip]") : null;
+    if (e.key === "Escape") {
+      document.querySelectorAll("[data-fx-tip].open").forEach(function (o) { o.classList.remove("open"); });
+      if (el) el.blur();
+    } else if (el && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault(); place(el); el.classList.toggle("open");
+    }
+  });
+  document.addEventListener("mouseover", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-fx-tip]") : null;
+    if (el) place(el);
+  });
+  document.addEventListener("focusin", function (e) {
+    var el = e.target.closest ? e.target.closest("[data-fx-tip]") : null;
+    if (el) place(el);
+  });
 })();

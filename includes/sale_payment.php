@@ -36,6 +36,9 @@ function psPaymentMethodIsCredit($code): bool
 function psPaymentMethodLabel($code): string
 {
     $code = strtoupper(trim((string)$code));
+    if ($code === 'SPLIT') {
+        return 'Split payment'; // 2026-11-05: several methods / currencies on one sale
+    }
     $methods = psPaymentMethods();
     return $methods[$code] ?? ($code !== '' ? $code : 'Not recorded');
 }
@@ -163,6 +166,275 @@ function psEvaluatePayment($total, $amountRaw, $methodRaw, $referenceRaw = '', s
         'reference' => psNormalizeReference($referenceRaw),
         'is_credit' => false,
     ];
+}
+
+/**
+ * 2026-11-05 — split payment and split currency (web, desktop and mobile tills share these rules).
+ *
+ * A sale has one currency and total (unchanged). It may be paid with several tenders, each in its own method and
+ * currency: [{method, currency, amount, reference}]. Rules:
+ *  1. A tender in another currency counts at the rate in force at sale time, converted exactly into the sale currency
+ *     (psFxRate tender -> sale, psFxConvertCents, half-up to the sale currency's decimals).
+ *  2. The tenders together must cover the total. Only CASH gives change: non-cash tenders together may not exceed it.
+ *  3. Change = covered - total, given in cash in the currency the cashier picks (default the sale currency), converted
+ *     sale -> change currency at the same moment. The change currency must be one the company sells in.
+ *  4. CREDIT (customer account) is a whole-sale method: it cannot be combined with other tenders.
+ *  5. One tender in the sale currency is exactly the old single payment.
+ *
+ * Returns ['ok' => true, 'tenders' => [...], 'change' => {...}|null, 'paid_sale_cents', 'total_cents', 'is_credit',
+ * 'is_split'] or ['ok' => false, 'error' => ...]. Each tender: method, method_label, currency, amount_cents (in its
+ * currency), sale_cents (in the sale currency), rate (1 tender = rate sale; '1' for the sale currency), rate_ids,
+ * reference. change: currency, amount_cents (in its currency), sale_cents, rate (1 sale = rate change), rate_ids.
+ */
+function psEvaluateTenders(mysqli $conn, string $company, string $saleCurrency, int $totalCents, array $tenders,
+    string $changeCurrency = '', string $at = ''): array
+{
+    require_once __DIR__ . '/currency.php';
+    $methods = psPaymentMethods();
+    $saleCurrency = strtoupper(trim($saleCurrency)) !== '' ? strtoupper(trim($saleCurrency)) : 'USD';
+    $at = $at !== '' ? $at : date('Y-m-d H:i:s');
+    if ($totalCents < 0) {
+        return ['ok' => false, 'error' => 'The sale total is not valid.'];
+    }
+    $tenders = array_values(array_filter($tenders, 'is_array'));
+    if (!$tenders) {
+        return ['ok' => false, 'error' => 'Add at least one payment.'];
+    }
+    if (count($tenders) > 8) {
+        return ['ok' => false, 'error' => 'A sale can be paid with at most 8 payments.'];
+    }
+    $sellable = function_exists('psFxCompanyCurrencies') ? psFxCompanyCurrencies($conn, $company) : [];
+    $currencyOk = static function (string $code) use ($sellable, $saleCurrency): bool {
+        return $code === $saleCurrency || isset($sellable[$code]);
+    };
+
+    // CREDIT stays a whole-sale method (account currency = sale currency is checked by the caller).
+    foreach ($tenders as $t) {
+        if (psPaymentMethodIsCredit($t['method'] ?? '')) {
+            if (count($tenders) > 1) {
+                return ['ok' => false, 'error' => 'Credit (account) cannot be combined with other payments.'];
+            }
+            $single = psEvaluatePayment($totalCents, '', 'CREDIT', (string)($t['reference'] ?? ''), $saleCurrency);
+            if (empty($single['ok'])) {
+                return $single;
+            }
+            return ['ok' => true, 'is_credit' => true, 'is_split' => false, 'total_cents' => $totalCents,
+                'paid_sale_cents' => $totalCents, 'change' => null,
+                'tenders' => [['method' => 'CREDIT', 'method_label' => $methods['CREDIT'], 'currency' => $saleCurrency,
+                    'amount_cents' => $totalCents, 'sale_cents' => $totalCents, 'rate' => '1', 'rate_ids' => '',
+                    'reference' => $single['reference']]]];
+        }
+    }
+
+    $out = [];
+    $paidSale = 0;
+    $nonCashSale = 0;
+    $cashSale = 0;
+    foreach ($tenders as $i => $t) {
+        $n = $i + 1;
+        $method = strtoupper(trim((string)($t['method'] ?? '')));
+        if (!isset($methods[$method])) {
+            return ['ok' => false, 'error' => "Payment $n: choose a valid payment method."];
+        }
+        $cur = strtoupper(trim((string)($t['currency'] ?? '')));
+        $cur = $cur !== '' ? $cur : $saleCurrency;
+        if (!preg_match('/^[A-Z]{3}$/', $cur) || !$currencyOk($cur)) {
+            return ['ok' => false, 'error' => "Payment $n: $cur is not a currency this company sells in."];
+        }
+        $cents = psDecimalCents($t['amount'] ?? '');
+        if ($cents === null || $cents <= 0) {
+            return ['ok' => false, 'error' => "Payment $n: enter an amount above zero."];
+        }
+        if ($cur === $saleCurrency) {
+            $saleCents = $cents;
+            $rate = '1';
+            $rateIds = '';
+        } else {
+            $r = psFxRate($conn, $company, $cur, $saleCurrency, $at);
+            if (empty($r['ok'])) {
+                return ['ok' => false, 'error' => "Payment $n: no exchange rate from $cur to $saleCurrency."];
+            }
+            $saleCents = psFxConvertCents($cents, $r['frac'], psFxDecimals($conn, $saleCurrency));
+            $rate = psFxFracToDecimal($r['frac'], 10);
+            $rateIds = implode(',', $r['ids'] ?? []);
+        }
+        $paidSale += $saleCents;
+        if ($method === 'CASH') {
+            $cashSale += $saleCents;
+        } else {
+            $nonCashSale += $saleCents;
+        }
+        $out[] = ['method' => $method, 'method_label' => $methods[$method], 'currency' => $cur, 'amount_cents' => $cents,
+            'sale_cents' => $saleCents, 'rate' => $rate, 'rate_ids' => substr($rateIds, 0, 60),
+            'reference' => $method === 'CASH' ? '' : psNormalizeReference($t['reference'] ?? '')];
+    }
+    if ($nonCashSale > $totalCents) {
+        return ['ok' => false, 'error' => 'Card, EcoCash and other non-cash payments cannot be more than the total. Only cash gets change.'];
+    }
+    if ($paidSale < $totalCents) {
+        return ['ok' => false, 'error' => 'The payments are short of the total by ' . psMoneyFromCents($totalCents - $paidSale) . ' ' . $saleCurrency . '.'];
+    }
+
+    $change = null;
+    $changeSale = $paidSale - $totalCents;
+    if ($changeSale > 0) {
+        $cc = strtoupper(trim($changeCurrency));
+        $cc = $cc !== '' ? $cc : $saleCurrency;
+        if (!preg_match('/^[A-Z]{3}$/', $cc) || !$currencyOk($cc)) {
+            return ['ok' => false, 'error' => "Change cannot be given in $cc."];
+        }
+        if ($cc === $saleCurrency) {
+            $change = ['currency' => $cc, 'amount_cents' => $changeSale, 'sale_cents' => $changeSale, 'rate' => '1', 'rate_ids' => ''];
+        } else {
+            $r = psFxRate($conn, $company, $saleCurrency, $cc, $at);
+            if (empty($r['ok'])) {
+                return ['ok' => false, 'error' => "No exchange rate from $saleCurrency to $cc for the change."];
+            }
+            $change = ['currency' => $cc, 'amount_cents' => psFxConvertCents($changeSale, $r['frac'], psFxDecimals($conn, $cc)),
+                'sale_cents' => $changeSale, 'rate' => psFxFracToDecimal($r['frac'], 10), 'rate_ids' => substr(implode(',', $r['ids'] ?? []), 0, 60)];
+        }
+    }
+    $isSplit = count($out) > 1 || $out[0]['currency'] !== $saleCurrency || ($change !== null && $change['currency'] !== $saleCurrency);
+    return ['ok' => true, 'is_credit' => false, 'is_split' => $isSplit, 'total_cents' => $totalCents,
+        'paid_sale_cents' => $paidSale, 'tenders' => $out, 'change' => $change];
+}
+
+/**
+ * Tenders from a request: the new `payments` list (JSON string or array), or the old single fields
+ * (payment_method / amount_paid / payment_reference) as one tender in the sale currency.
+ */
+function psTendersFromRequest(array $src, string $saleCurrency): array
+{
+    $raw = $src['payments'] ?? null;
+    if (is_string($raw) && trim($raw) !== '') {
+        $raw = json_decode($raw, true);
+    }
+    if (is_array($raw) && $raw) {
+        $list = [];
+        foreach (array_slice($raw, 0, 8) as $t) {
+            if (is_array($t)) {
+                $list[] = ['method' => (string)($t['method'] ?? ''), 'currency' => (string)($t['currency'] ?? ''),
+                    'amount' => (string)($t['amount'] ?? ''), 'reference' => (string)($t['reference'] ?? '')];
+            }
+        }
+        return $list;
+    }
+    return [['method' => (string)($src['payment_method'] ?? ''), 'currency' => $saleCurrency,
+        'amount' => (string)($src['amount_paid'] ?? ''), 'reference' => (string)($src['payment_reference'] ?? '')]];
+}
+
+/**
+ * Insert one sale_payments row per tender and one change row (is_change = 1). $token makes every row unique
+ * (token-1, token-2 …, token-C). The first tender row keeps the old meaning for old readers:
+ * amount_paid in its currency and change_amount (only when it is the single tender in the sale currency).
+ */
+function psInsertSaleTenders(mysqli $conn, string $invoice, array $eval, array $who, string $token): bool
+{
+    $single = count($eval['tenders']) === 1 && !$eval['is_split'];
+    $changeCents = $eval['change']['amount_cents'] ?? 0;
+    $stmt = mysqli_prepare($conn, 'INSERT INTO sale_payments
+        (invoice_number, method, amount_paid, change_amount, currency, reference, cashier_id, cashier_email, till_session_id,
+         created_at, payment_token, tender_seq, sale_amount, tender_rate, tender_rate_ids, is_change)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    if (!$stmt) {
+        return false;
+    }
+    $rows = [];
+    foreach ($eval['tenders'] as $i => $t) {
+        $rows[] = [$t['method'], psMoneyFromCents($t['amount_cents']), $single ? psMoneyFromCents($changeCents) : '0.00',
+            $t['currency'], $t['reference'] !== '' ? $t['reference'] : null, $token !== '' ? $token . '-' . ($i + 1) : null,
+            $i + 1, psMoneyFromCents($t['sale_cents']), $t['rate'], $t['rate_ids'] !== '' ? $t['rate_ids'] : null, 0];
+    }
+    if (!$single && $eval['change'] !== null) {
+        $c = $eval['change'];
+        $rows[] = ['CASH', psMoneyFromCents($c['amount_cents']), '0.00', $c['currency'], null,
+            $token !== '' ? $token . '-C' : null, count($eval['tenders']) + 1, psMoneyFromCents($c['sale_cents']),
+            $c['rate'], $c['rate_ids'] !== '' ? $c['rate_ids'] : null, 1];
+    }
+    $cashierId = $who['cashier_id'] ?? null;
+    $cashierEmail = $who['cashier_email'] ?? null;
+    $session = $who['till_session_id'] ?? null;
+    $created = $who['created_at'] ?? date('Y-m-d H:i:s');
+    foreach ($rows as $r) {
+        [$method, $paid, $chg, $cur, $ref, $tok, $seq, $saleAmt, $rate, $rateIds, $isChange] = $r;
+        mysqli_stmt_bind_param($stmt, 'ssssssisississsi', $invoice, $method, $paid, $chg, $cur, $ref, $cashierId, $cashierEmail,
+            $session, $created, $tok, $seq, $saleAmt, $rate, $rateIds, $isChange);
+        if (!mysqli_stmt_execute($stmt)) {
+            mysqli_stmt_close($stmt);
+            return false;
+        }
+    }
+    mysqli_stmt_close($stmt);
+    return true;
+}
+
+/**
+ * Net cash per currency for a sale: cash tendered in that currency minus change given in it (change can make it
+ * negative, e.g. a ZiG sale paid in USD with change in ZiG). Feeds one CASH_SALE movement per currency drawer.
+ *
+ * @return array<string,int> currency => cents
+ */
+function psTenderCashByCurrency(array $eval): array
+{
+    $net = [];
+    foreach ($eval['tenders'] as $t) {
+        if ($t['method'] === 'CASH') {
+            $net[$t['currency']] = ($net[$t['currency']] ?? 0) + $t['amount_cents'];
+        }
+    }
+    if (!empty($eval['change'])) {
+        $c = $eval['change'];
+        $net[$c['currency']] = ($net[$c['currency']] ?? 0) - $c['amount_cents'];
+    }
+    return array_filter($net, static fn($v) => $v !== 0);
+}
+
+/** "Paid EcoCash $20.00" lines for receipts; the change line last. $fmt formats (cents, currency). */
+function psTenderReceiptLines(array $eval, callable $fmt): array
+{
+    $lines = [];
+    foreach ($eval['tenders'] as $t) {
+        $lines[] = ['Paid ' . $t['method_label'] . ($t['reference'] !== '' ? ' (' . $t['reference'] . ')' : ''), $fmt($t['amount_cents'], $t['currency'])];
+    }
+    if (!empty($eval['change'])) {
+        $lines[] = ['Change', $fmt($eval['change']['amount_cents'], $eval['change']['currency'])];
+    }
+    return $lines;
+}
+
+/**
+ * 2026-11-05: the payment lines of a sale for receipts — one per tender, each in its own currency, then the change.
+ * Returns [] for a sale with a single payment row in its sale currency (show the classic Method / Paid / Change).
+ *
+ * @return list<array{label:string,amount:string,currency:string}>
+ */
+function psSaleTenderLines(mysqli $conn, string $invoiceNumber): array
+{
+    if (!psEnsureSalePayments($conn)) {
+        return [];
+    }
+    $stmt = mysqli_prepare($conn, 'SELECT method, amount_paid, currency, reference, is_change, tender_seq FROM sale_payments
+        WHERE invoice_number = ? ORDER BY tender_seq IS NULL, tender_seq, id');
+    if (!$stmt) {
+        return [];
+    }
+    mysqli_stmt_bind_param($stmt, 's', $invoiceNumber);
+    mysqli_stmt_execute($stmt);
+    $rows = mysqli_fetch_all(mysqli_stmt_get_result($stmt), MYSQLI_ASSOC);
+    mysqli_stmt_close($stmt);
+    if (count($rows) < 2 || $rows[0]['tender_seq'] === null) {
+        return [];
+    }
+    $out = [];
+    foreach ($rows as $r) {
+        $ref = trim((string)($r['reference'] ?? ''));
+        $out[] = [
+            'label' => (int)$r['is_change'] === 1 ? 'Change' : 'Paid ' . psPaymentMethodLabel($r['method']) . ($ref !== '' ? ' (' . $ref . ')' : ''),
+            'amount' => (string)$r['amount_paid'],
+            'currency' => (string)$r['currency'],
+        ];
+    }
+    return $out;
 }
 
 function psReceiptPaymentView(?array $row): array
@@ -361,6 +633,19 @@ function psEnsureSaleIntegritySchema(mysqli $conn): bool
     if (!psEnsureColumn($conn, 'sale_payments', 'payment_token', 'VARCHAR(64) NULL DEFAULT NULL')) {
         return false;
     }
+    // 2026-11-05 split payment / split currency: one row per tender (+ one change row). Older rows (one per sale) have
+    // tender_seq NULL, is_change 0 and sale_amount NULL = amount_paid - change_amount in the sale currency.
+    foreach ([
+        'tender_seq' => 'SMALLINT NULL DEFAULT NULL',
+        'sale_amount' => 'DECIMAL(14,2) NULL DEFAULT NULL',
+        'tender_rate' => 'DECIMAL(24,10) NULL DEFAULT NULL',
+        'tender_rate_ids' => 'VARCHAR(60) NULL DEFAULT NULL',
+        'is_change' => 'TINYINT(1) NOT NULL DEFAULT 0',
+    ] as $col => $def) {
+        if (!psEnsureColumn($conn, 'sale_payments', $col, $def)) {
+            return false;
+        }
+    }
     $printCol = mysqli_query($conn, "SHOW COLUMNS FROM print_jobs LIKE 'invoice_number'");
     $printType = '';
     if ($printCol && ($printRow = mysqli_fetch_assoc($printCol))) {
@@ -498,8 +783,56 @@ function psMoney(float $amount): string
  * line whose quantity is within the quoted quantity; otherwise the branch price. Only built server-side from a locked,
  * open quotation (psQuoteForSale), never from the browser.
  */
-function psBuildSaleLines(mysqli $conn, array $cart, string $branch, string $company, ?string $txnDate = null, array $priceOverrides = [], ?array $fx = null): array
+/**
+ * Spread a sale-level discount over lines by line amount (revenue cents), largest remainder, as discount_cents.
+ *
+ * @return array{ok:bool,lines?:array,error?:string}
+ */
+function psSpreadSaleDiscount(array $lines, int $discountCents): array
 {
+    $amounts = [];
+    $total = 0;
+    foreach ($lines as $i => $l) {
+        $c = (int)psDecimalCents((string)($l['revenue'] ?? '0'));
+        $amounts[$i] = max(0, $c);
+        $total += $amounts[$i];
+    }
+    if ($discountCents > $total) {
+        return ['ok' => false, 'error' => 'The discount is more than the sale amount.'];
+    }
+    if ($total === 0 || $discountCents === 0) {
+        return ['ok' => true, 'lines' => $lines];
+    }
+    $given = 0;
+    $rema = [];
+    foreach ($amounts as $i => $c) {
+        $exact = $discountCents * $c;
+        $share = intdiv($exact, $total);
+        $lines[$i]['discount_cents'] = $share;
+        $given += $share;
+        $rema[$i] = $exact % $total;
+    }
+    arsort($rema);
+    foreach (array_keys($rema) as $i) {
+        if ($given >= $discountCents) {
+            break;
+        }
+        if ($lines[$i]['discount_cents'] < $amounts[$i]) {
+            $lines[$i]['discount_cents']++;
+            $given++;
+        }
+    }
+    return ['ok' => true, 'lines' => $lines];
+}
+
+function psBuildSaleLines(mysqli $conn, array $cart, string $branch, string $company, ?string $txnDate = null, array $priceOverrides = [], ?array $fx = null, int $saleDiscountCents = 0): array
+{
+    // $saleDiscountCents (2026-10-24, loyalty redemption): a sale-level discount in the sale currency, spread over the
+    // lines in proportion to their amounts (largest remainder) as each line's discount_cents, so tax is worked out on the
+    // discounted amount by psTaxApplyToSaleLines. It may not exceed the cart amount.
+    if ($saleDiscountCents < 0) {
+        return ['ok' => false, 'error' => 'Discount cannot be negative.'];
+    }
     // Multi-currency (2026-10-20): $fx is the server snapshot (psFxSnapshot) of the sale currency. Branch prices are kept
     // in the company base; each unit price (and unit cost) is converted once with the exact rate and rounded to the
     // currency's decimals, then quantity and tax are worked out in the sale currency. Quoted prices already in the sale
@@ -518,6 +851,9 @@ function psBuildSaleLines(mysqli $conn, array $cart, string $branch, string $com
         return ['ok' => false, 'error' => 'Payment could not be completed. Please try again.'];
     }
     $lines = [];
+    // 2026-10-28 packs: per product, its packs and whole-unit rule (includes/product_packs.php).
+    require_once __DIR__ . '/product_packs.php';
+    $packInfo = [];
     foreach ($cart as $item) {
         if (!is_array($item)) {
             return ['ok' => false, 'error' => 'No cart data received.'];
@@ -549,6 +885,72 @@ function psBuildSaleLines(mysqli $conn, array $cart, string $branch, string $com
             return ['ok' => false, 'error' => 'A product price is not valid.'];
         }
         $baseUnitCents = $unitCents;
+        $pid = (string)$product['product_id'];
+        if (!array_key_exists($pid, $packInfo)) {
+            $packInfo[$pid] = psPackProductInfo($conn, $company, $pid);
+        }
+        $pinfo = $packInfo[$pid];
+        $whole = $pinfo !== null && !empty($pinfo['whole']);
+        $baseLabel = $pinfo !== null ? (string)$pinfo['base_label'] : 'unit';
+        $packId = (int)($item['pack_id'] ?? 0);
+        if ($packId > 0) {
+            // Sold in a pack: the pack's own price (company base, converted like every price), whole packs only;
+            // the line quantity becomes base units (packs × units per pack) for stock, cost and reports.
+            $pack = psPackGet($conn, $company, $packId);
+            if (!$pack || $pack['product_id'] !== $pid || !$pack['active'] || $pack['price'] === null) {
+                return ['ok' => false, 'error' => 'A pack of ' . trim((string)$product['product']) . ' is no longer sold. Remove it from the cart and add it again.'];
+            }
+            $conv = psPackToBase($qtyRaw, $pack, $whole, $baseLabel);
+            if (empty($conv['ok'])) {
+                return ['ok' => false, 'error' => trim((string)$product['product']) . ': ' . $conv['error']];
+            }
+            $packCents = (int)psDecimalCents((string)$pack['price']);
+            if ($fxOn) {
+                $packCents = psFxFromBaseCents($conn, $fx, $packCents);
+            }
+            $packLine = psLineCents($packCents, $qtyRaw);
+            if ($fxOn && $packLine !== null) {
+                $packLine = psFxRoundCentsToDecimals($packLine, $fxDec);
+            }
+            if ($packLine === null || $packLine < 0) {
+                return ['ok' => false, 'error' => 'Sale total is not valid.'];
+            }
+            $baseMilli = (int)$conv['base_milli'];
+            $name = trim((string)$product['product']);
+            if (strlen($name) > 250) {
+                $name = substr($name, 0, 250);
+            }
+            $lines[] = [
+                'product_id' => $pid,
+                'product' => $name,
+                'quantity' => psStockQtyPlain(psMilliToStock($baseMilli)),
+                // Price per base unit (rounded, display only); the line amount is the exact pack amount (pre_cents).
+                'price' => psMoneyFromCents(intdiv($packLine * 1000 * 2 + $baseMilli, 2 * $baseMilli)),
+                'pre_cents' => $packLine,
+                'revenue' => psMoneyFromCents($packLine),
+                'cost_price' => (isset($product['cost_price']) && is_numeric($product['cost_price']))
+                    ? ($fxOn
+                        ? psMoneyFromCents(psFxFromBaseCents($conn, $fx, (int)psDecimalCents(number_format((float)$product['cost_price'], 2, '.', ''))))
+                        : number_format((float)$product['cost_price'], 2, '.', ''))
+                    : null,
+                'base_price' => (string)$pack['price'],
+                'tax_code' => isset($product['tax_code']) ? strtoupper(trim((string)$product['tax_code'])) : '',
+                'quoted' => false,
+                'pack_id' => (int)$pack['id'],
+                'sell_unit' => (string)$pack['name'],
+                'sell_qty' => psPackQtyText((int)$conv['qty_milli']),
+                'sell_factor' => (string)$pack['factor'],
+                'sell_price' => psMoneyFromCents($packCents),
+                'base_label' => $baseLabel,
+            ];
+            continue;
+        }
+        if ($whole) {
+            $conv = psPackToBase($qtyRaw, null, true, $baseLabel);
+            if (empty($conv['ok'])) {
+                return ['ok' => false, 'error' => trim((string)$product['product']) . ': ' . $conv['error']];
+            }
+        }
         if ($fxOn) {
             $unitCents = psFxFromBaseCents($conn, $fx, $unitCents);
         }
@@ -594,11 +996,19 @@ function psBuildSaleLines(mysqli $conn, array $cart, string $branch, string $com
             // Server product tax_code only — never from cart/browser.
             'tax_code' => isset($product['tax_code']) ? strtoupper(trim((string)$product['tax_code'])) : '',
             'quoted' => $quoted,
+            'base_label' => $pinfo !== null && trim((string)($pinfo['base_unit'] ?? '')) !== '' ? $baseLabel : '',
         ];
     }
     $saleDate = $txnDate !== null && preg_match('/^\d{4}-\d{2}-\d{2}$/', trim($txnDate))
         ? trim($txnDate)
         : date('Y-m-d');
+    if ($saleDiscountCents > 0) {
+        $spread = psSpreadSaleDiscount($lines, $saleDiscountCents);
+        if (empty($spread['ok'])) {
+            return ['ok' => false, 'error' => (string)$spread['error']];
+        }
+        $lines = $spread['lines'];
+    }
     $taxed = psTaxApplyToSaleLines($conn, $lines, $branch, $saleDate);
     if (!$taxed['ok']) {
         return ['ok' => false, 'error' => (string)($taxed['error'] ?? 'Sale total is not valid.')];

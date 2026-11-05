@@ -7,10 +7,12 @@
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/sale_payment.php';
+require_once __DIR__ . '/includes/product_packs.php';
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/tax.php';
 require_once __DIR__ . '/includes/zimra.php';
 require_once __DIR__ . '/includes/cash_controls.php';
+require_once __DIR__ . '/includes/receipt_reprint.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
 ini_set('display_errors', '0');
@@ -46,13 +48,24 @@ $hdrRes = mysqli_stmt_get_result($hdrStmt);
 $receipt_info = $hdrRes ? mysqli_fetch_assoc($hdrRes) : null;
 mysqli_stmt_close($hdrStmt);
 
-if (!$receipt_info || !psBranchSaleBranchAuthorised($conn, $receipt_info['branch'] ?? '') || !psReceiptVisibleToUser($receipt_info)) {
+if (!$receipt_info || !psBranchSaleBranchAuthorised($conn, $receipt_info['branch'] ?? '') || !psReceiptVisibleToUser($receipt_info)
+    || !psOperatorMayOpenReceipt($conn, $receipt_info)) {
     echo '<!DOCTYPE html><html><body><p>Receipt not found.</p></body></html>';
     mysqli_close($conn);
     exit;
 }
-// 2026-10-17: the first receipt prints at the sale; anything printed from here is a copy. Record who and when.
-$reprintNo = psReceiptReprintLog($conn, $invoice_number, (string)($receipt_info['branch'] ?? ''), 'web');
+// The first receipt prints at the sale; anything printed from here is a copy. Till users need a supervisor's
+// single-use approval (receipt_reprint_authorise.php). Record who asked, who approved and when.
+$grant = psReprintConsumeGrant($invoice_number, PS_REPRINT_DOC_RECEIPT, trim((string)($_GET['grant'] ?? '')));
+if (empty($grant['ok'])) {
+    psReprintAudit($conn, $invoice_number, (string)($receipt_info['branch'] ?? ''), 'DENIED', PS_REPRINT_DOC_RECEIPT, null, 'Opened without a valid approval');
+    mysqli_close($conn);
+    psReprintDeniedPage((string)$grant['error']);
+    exit;
+}
+$reprintNo = psReceiptReprintLog($conn, $invoice_number, (string)($receipt_info['branch'] ?? ''), 'web', null, null, null, (string)$grant['approved_by']);
+$approvedBy = (string)$grant['approved_by'];
+$mayPdf = !psReprintNeedsApproval();
 
 $details = [];
 $total_revenue = 0.0;
@@ -169,7 +182,7 @@ mysqli_close($conn);
 <body>
     <div class="toolbar no-print">
         <button type="button" onclick="window.print()">Print</button>
-        <a href="my_receipt.php?invoice_number=<?php echo rawurlencode($invoice_number); ?>">PDF</a>
+        <?php if ($mayPdf): ?><a href="my_receipt.php?invoice_number=<?php echo rawurlencode($invoice_number); ?>">PDF</a><?php endif; ?>
         <a href="all_receipts.php">Back</a>
         <span class="hint">Sized for 80 mm receipt paper</span>
     </div>
@@ -180,8 +193,12 @@ mysqli_close($conn);
                     <img src="<?php echo $esc($zimraView['logo']); ?>" alt="" style="max-width:50mm;max-height:22mm;display:block;margin:0 auto 6px">
                 <?php endif; ?>
                 <div class="brand"><?php echo $esc($companyTitle); ?></div>
+                <?php if (trim((string)($receipt_info['order_no'] ?? '')) !== ''): ?>
+                    <div style="font-size:15px;font-weight:800;letter-spacing:.04em;margin:4px 0">ORDER <?php echo $esc($receipt_info['order_no']); ?></div>
+                <?php endif; ?>
                 <div class="muted">INVOICE <?php echo $esc($invoice_number); ?></div>
                 <div style="font-weight:800;margin-top:4px;letter-spacing:.06em">*** COPY<?php echo $reprintNo > 0 ? ' · REPRINT ' . (int)$reprintNo : ''; ?> ***</div>
+                <div class="muted">Reprinted <?php echo $esc(date('Y-m-d H:i')); ?> · approved by <?php echo $esc($approvedBy); ?></div>
             </div>
             <hr class="rule">
             <div class="muted">
@@ -223,7 +240,7 @@ mysqli_close($conn);
                             <?php echo $esc($item['product'] ?? ''); ?>
                             <?php if ($taxNote !== ''): ?><div class="muted"><?php echo $esc($taxNote); ?></div><?php endif; ?>
                         </td>
-                        <td class="num"><?php echo $esc($item['quantity'] ?? ''); ?></td>
+                        <td class="num"><?php echo $esc(function_exists('psPackLineQtyText') && !empty($item['sell_unit']) ? psPackLineQtyText($item) : ($item['quantity'] ?? '')); ?></td>
                         <td class="num"><?php echo $esc($money($amt)); ?></td>
                     </tr>
                 <?php endforeach; ?>
@@ -244,7 +261,12 @@ mysqli_close($conn);
                     <tr><td colspan="2" class="muted">Tax split not recorded (legacy)</td></tr>
                 <?php endif; ?>
                 <tr class="grand"><td>Total</td><td class="num"><?php echo $esc($money($storedTotal)); ?></td></tr>
-                <?php if (!$paymentView['recorded']): ?>
+                <?php $tenderLines = psSaleTenderLines($conn, (string)$invoice_number); // 2026-11-05 split payment ?>
+                <?php if ($tenderLines): ?>
+                    <?php foreach ($tenderLines as $tl): ?>
+                    <tr><td><?php echo $esc($tl['label']); ?></td><td class="num"><?php echo $esc(psFxFormat($conn, $tl['amount'], $tl['currency'])); ?></td></tr>
+                    <?php endforeach; ?>
+                <?php elseif (!$paymentView['recorded']): ?>
                     <tr><td>Payment</td><td class="num">Not recorded</td></tr>
                 <?php else: ?>
                     <tr><td>Method</td><td class="num"><?php echo $esc($paymentView['method_label']); ?></td></tr>

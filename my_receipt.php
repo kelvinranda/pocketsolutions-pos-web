@@ -13,7 +13,9 @@ if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'vendor/autoload.php'; // Include MPDF
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/sale_payment.php';
+require_once __DIR__ . '/includes/product_packs.php';
 require_once __DIR__ . '/includes/cash_controls.php';
+require_once __DIR__ . '/includes/receipt_reprint.php';
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/tax.php';
 
@@ -66,12 +68,23 @@ if ($invoice_number) {
     $receipt_info = $receipt_result ? mysqli_fetch_assoc($receipt_result) : null;
     mysqli_stmt_close($hdrStmt);
 
-    if (!$receipt_info || !psBranchSaleBranchAuthorised($conn, $receipt_info['branch'] ?? '') || !psReceiptVisibleToUser($receipt_info)) {
+    if (!$receipt_info || !psBranchSaleBranchAuthorised($conn, $receipt_info['branch'] ?? '') || !psReceiptVisibleToUser($receipt_info)
+        || !psOperatorMayOpenReceipt($conn, $receipt_info)) {
         // Same message for missing and unauthorised (no cross-branch existence leak).
         echo receipt_fallback_page('Receipt not found.');
         mysqli_close($conn);
         exit;
     }
+    // 2026-10-24: a PDF of a completed receipt is a copy — Till users need a supervisor's approval first.
+    $grant = psReprintConsumeGrant((string)$invoice_number, PS_REPRINT_DOC_PDF, trim((string)($_GET['grant'] ?? '')));
+    if (empty($grant['ok'])) {
+        psReprintAudit($conn, (string)$invoice_number, (string)($receipt_info['branch'] ?? ''), 'DENIED', PS_REPRINT_DOC_PDF, null, 'Opened without a valid approval');
+        mysqli_close($conn);
+        psReprintDeniedPage((string)$grant['error']);
+        exit;
+    }
+    psReceiptReprintLog($conn, (string)$invoice_number, (string)($receipt_info['branch'] ?? ''), 'web', null, null, null,
+        (string)$grant['approved_by'], PS_REPRINT_DOC_PDF);
 
     $lineStmt = mysqli_prepare(
         $conn,
@@ -142,41 +155,13 @@ if ($invoice_number) {
             }
         }
 
-        $defaultLogo = __DIR__ . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'pockets-logo.png';
-        $companyLogo = $defaultLogo;
-        $companyToken = strtoupper(preg_replace('/[^A-Za-z0-9]+/', '', $companyTitle));
-        $namedLogos = [
-            'EARTHQUIP' => __DIR__ . DIRECTORY_SEPARATOR . 'earth.jpeg',
-            'SHINKAND' => __DIR__ . DIRECTORY_SEPARATOR . 'shinkand.jpeg',
-        ];
-        foreach ($namedLogos as $needle => $path) {
-            if ($companyToken !== '' && strpos($companyToken, $needle) !== false && is_file($path)) {
-                $companyLogo = $path;
-                break;
-            }
+        // 2026-10-31: the company's own logo, uploaded by an admin on the Receipts page (none = no picture).
+        // It used to pick a hard-coded company logo by name.
+        require_once __DIR__ . '/includes/company_logo.php';
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start();
         }
-        if (!is_file($companyLogo)) {
-            $companyLogo = $defaultLogo;
-        }
-
-        $logoHtml = '';
-        if (is_file($companyLogo)) {
-            $logoSrc = str_replace('\\', '/', $companyLogo);
-            $logoHeight = 72;
-            $logoWidth = 72;
-            $logoSize = @getimagesize($companyLogo);
-            if ($logoSize && !empty($logoSize[0]) && !empty($logoSize[1])) {
-                $logoWidth = (int) round($logoSize[0] * ($logoHeight / $logoSize[1]));
-                if ($logoWidth > 160) {
-                    $logoWidth = 160;
-                    $logoHeight = (int) max(48, round($logoSize[1] * (160 / $logoSize[0])));
-                    if ($logoHeight > 72) {
-                        $logoHeight = 72;
-                    }
-                }
-            }
-            $logoHtml = '<td class="brand-logo" width="' . $logoWidth . '"><img src="' . $esc($logoSrc) . '" width="' . $logoWidth . '" height="' . $logoHeight . '" alt=""></td>';
-        }
+        $logoHtml = psCompanyLogoInvoiceCell(psCompanyLogoGet($conn, trim((string)($_SESSION['the_company'] ?? ''))), $esc);
 
         $storedTotal = null;
         if (isset($receipt_info['totalz']) && is_numeric(trim((string)$receipt_info['totalz']))) {
@@ -239,7 +224,13 @@ if ($invoice_number) {
 
         $paymentView = psReceiptPaymentView(psPaymentForInvoice($conn, $invoice_number));
         $paymentRows = '';
-        if (!$paymentView['recorded']) {
+        // 2026-11-05: a split / multi-currency payment lists every tender in its own currency, then the change.
+        $tenderLines = psSaleTenderLines($conn, (string)$invoice_number);
+        if ($tenderLines) {
+            foreach ($tenderLines as $tl) {
+                $paymentRows .= '<tr><td>' . $esc($tl['label']) . '</td><td class="num">' . $esc(psFxFormat($conn, $tl['amount'], $tl['currency'])) . '</td></tr>';
+            }
+        } elseif (!$paymentView['recorded']) {
             $paymentRows = '<tr><td>Payment</td><td class="num">Not recorded</td></tr>';
         } else {
             $paymentRows = '<tr><td>Payment method</td><td class="num">' . $esc($paymentView['method_label']) . '</td></tr>';
@@ -299,7 +290,7 @@ if ($invoice_number) {
                     padding: 0;
                 }
                 .accent {
-                    border-bottom: 3px solid #f5b400;
+                    border-bottom: 3px solid #1a86d8; /* Pockets logo blue (2026-10-31) */
                     font-size: 1pt;
                     line-height: 1pt;
                     margin: 0 0 16px 0;
@@ -416,6 +407,7 @@ if ($invoice_number) {
                 </tr>
             </table>
             <div class="accent">&nbsp;</div>
+            ' . (trim((string)($receipt_info['order_no'] ?? '')) !== '' ? '<p class="invoice-label">ORDER</p><p class="invoice-number">' . $esc($receipt_info['order_no']) . '</p>' : '') . '
             <p class="invoice-label">INVOICE · COPY</p>
             <p class="invoice-number">' . $esc($invoice_number) . '</p>
             ' . $metaHtml . '
@@ -436,7 +428,10 @@ if ($invoice_number) {
         $sumTaxable = 0.0;
         $hasCompleteTaxLines = false;
         foreach ($details_array as $item) {
-            if (isset($item['unit_price']) && $item['unit_price'] !== null && $item['unit_price'] !== '' && is_numeric($item['unit_price'])) {
+            if (!empty($item['sell_unit']) && is_numeric($item['sell_price'] ?? null)) {
+                // 2026-10-28: sold in a pack — the pack price.
+                $unitFormatted = $money((float)$item['sell_price']) . ' / ' . (string)$item['sell_unit'];
+            } elseif (isset($item['unit_price']) && $item['unit_price'] !== null && $item['unit_price'] !== '' && is_numeric($item['unit_price'])) {
                 $unitFormatted = $money((float)$item['unit_price']);
             } else {
                 $unitFormatted = 'Not recorded';
@@ -468,7 +463,7 @@ if ($invoice_number) {
             $html .= '
                     <tr>
                         <td>' . $esc($item['product']) . '</td>
-                        <td class="num">' . $esc($item['quantity']) . '</td>
+                        <td class="num">' . $esc(!empty($item['sell_unit']) ? psPackLineQtyText($item) : $item['quantity']) . '</td>
                         <td class="num">' . $esc($unitFormatted) . '</td>
                         <td>' . $taxLabel . '</td>
                         <td class="num">' . $money($lineAmount) . '</td>
@@ -524,7 +519,7 @@ if ($invoice_number) {
         </body>
         </html>';
 
-        $mpdf->WriteHTML($html);
+        $mpdf->WriteHTML(function_exists('psBranchLabelHtml') ? psBranchLabelHtml($html) : $html); // 2026-11-02 shared branch names
         $mpdf->Output('Receipt_Invoice_' . $invoice_number . '.pdf', \Mpdf\Output\Destination::INLINE); // Open PDF in browser
         exit;
     } else {

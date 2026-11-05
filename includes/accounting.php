@@ -17,6 +17,8 @@ require_once __DIR__ . '/branch_access.php';
 require_once __DIR__ . '/reporting.php';
 require_once __DIR__ . '/sale_payment.php';
 require_once __DIR__ . '/tax.php';
+require_once __DIR__ . '/expense_company.php';
+require_once __DIR__ . '/customer_master.php';
 
 const PS_ACCT_BATCH_EXPORTING = 'EXPORTING';
 const PS_ACCT_BATCH_EXPORTED = 'EXPORTED';
@@ -556,6 +558,52 @@ function psEnsureAccountingSeqSchema(mysqli $conn): bool
     return true;
 }
 
+/** 2026-11-02: the signed-in company (accounting mappings and batches are per company). */
+function psAccountingCompany(): string
+{
+    return session_status() === PHP_SESSION_ACTIVE ? trim((string)($_SESSION['the_company'] ?? '')) : '';
+}
+
+/**
+ * 2026-11-02 — Per-company mappings and batches. Mappings were one shared set for every company and
+ * batches were listed for every company. Adds company_name to both tables (idempotent).
+ */
+function psAccountingEnsureCompanyColumns(mysqli $conn): bool
+{
+    static $done = null;
+    if ($done !== null) {
+        return $done;
+    }
+    $done = true;
+    $c = mysqli_query($conn, "SHOW COLUMNS FROM accounting_account_mappings LIKE 'company_name'");
+    if ($c && mysqli_num_rows($c) === 0) {
+        $done = (bool)mysqli_query($conn, "ALTER TABLE accounting_account_mappings
+            ADD COLUMN company_name VARCHAR(250) NOT NULL DEFAULT '' FIRST,
+            DROP PRIMARY KEY, ADD PRIMARY KEY (company_name, mapping_key)");
+    }
+    $c = mysqli_query($conn, "SHOW COLUMNS FROM accounting_export_batches LIKE 'company_name'");
+    if ($c && mysqli_num_rows($c) === 0) {
+        $done = $done && (bool)mysqli_query($conn, 'ALTER TABLE accounting_export_batches
+            ADD COLUMN company_name VARCHAR(250) NULL, ADD KEY idx_acct_batch_company (company_name)');
+    }
+    return $done;
+}
+
+/**
+ * Batches the signed-in company may see: its own, plus older (unlabelled) single-branch batches of its branches.
+ */
+function psAccountingBatchCompanySql(mysqli $conn, string $alias = ''): string
+{
+    $co = psAccountingCompany();
+    if ($co === '') {
+        return '0';
+    }
+    $a = $alias !== '' ? $alias . '.' : '';
+    require_once __DIR__ . '/product_master.php';
+    return '(' . $a . "company_name = '" . mysqli_real_escape_string($conn, $co) . "' OR (" . $a . 'company_name IS NULL AND '
+        . $a . 'all_branches = 0 AND ' . psCompanyBranchesInSql($conn, $a . 'branch_filter') . '))';
+}
+
 /**
  * Ensure schema + seed empty mapping rows (does not invent account codes).
  */
@@ -566,17 +614,43 @@ function psEnsureAccountingModule(mysqli $conn): bool
         || !psEnsureAccountingBatchSourcesSchema($conn)
         || !psEnsureAccountingEntriesSchema($conn)
         || !psEnsureAccountingExportedSourcesSchema($conn)
-        || !psEnsureAccountingSeqSchema($conn)) {
+        || !psEnsureAccountingSeqSchema($conn)
+        || !psAccountingEnsureCompanyColumns($conn)) {
         return false;
     }
     $now = date('Y-m-d H:i:s');
+    $company = psAccountingCompany();
+    if ($company === '') {
+        return true;
+    }
+    // First use by a company: take over the old shared codes only if they were last saved by one of its own users.
+    $own = mysqli_prepare($conn, "SELECT COUNT(*) AS n FROM accounting_account_mappings WHERE company_name = ?");
+    if ($own) {
+        mysqli_stmt_bind_param($own, 's', $company);
+        mysqli_stmt_execute($own);
+        $hasOwn = (int)(mysqli_fetch_assoc(mysqli_stmt_get_result($own))['n'] ?? 0) > 0;
+        mysqli_stmt_close($own);
+        if (!$hasOwn) {
+            $copy = mysqli_prepare($conn, "INSERT IGNORE INTO accounting_account_mappings
+                    (company_name, mapping_key, label, description, account_code, account_name, is_required, updated_by, updated_at)
+                SELECT ?, m.mapping_key, m.label, m.description, m.account_code, m.account_name, m.is_required, m.updated_by, m.updated_at
+                  FROM accounting_account_mappings m
+                 WHERE m.company_name = '' AND EXISTS (SELECT 1 FROM users u WHERE u.company_name = ?
+                       AND (u.email = m.updated_by OR CONCAT(u.firstname, ' ', u.lastname) = m.updated_by))");
+            if ($copy) {
+                mysqli_stmt_bind_param($copy, 'ss', $company, $company);
+                mysqli_stmt_execute($copy);
+                mysqli_stmt_close($copy);
+            }
+        }
+    }
     foreach (psAccountingMappingSeed() as $row) {
         $key = $row['mapping_key'];
         $stmt = mysqli_prepare(
             $conn,
             'INSERT IGNORE INTO accounting_account_mappings
-                (mapping_key, label, description, account_code, account_name, is_required, updated_by, updated_at)
-             VALUES (?, ?, ?, \'\', \'\', ?, \'system\', ?)'
+                (company_name, mapping_key, label, description, account_code, account_name, is_required, updated_by, updated_at)
+             VALUES (?, ?, ?, ?, \'\', \'\', ?, \'system\', ?)'
         );
         if (!$stmt) {
             error_log('accounting mapping seed prepare failed');
@@ -585,7 +659,7 @@ function psEnsureAccountingModule(mysqli $conn): bool
         $req = (int)$row['is_required'];
         $label = $row['label'];
         $desc = $row['description'];
-        mysqli_stmt_bind_param($stmt, 'sssis', $key, $label, $desc, $req, $now);
+        mysqli_stmt_bind_param($stmt, 'ssssis', $company, $key, $label, $desc, $req, $now);
         if (!mysqli_stmt_execute($stmt)) {
             mysqli_stmt_close($stmt);
             error_log('accounting mapping seed failed');
@@ -607,8 +681,9 @@ function psAccountingLoadMappings(mysqli $conn): array
     $out = [];
     $res = mysqli_query(
         $conn,
-        'SELECT mapping_key, label, description, account_code, account_name, is_required
-         FROM accounting_account_mappings ORDER BY mapping_key ASC'
+        "SELECT mapping_key, label, description, account_code, account_name, is_required
+         FROM accounting_account_mappings WHERE company_name = '" . mysqli_real_escape_string($conn, psAccountingCompany()) . "'
+         ORDER BY mapping_key ASC"
     );
     if (!$res) {
         return [];
@@ -661,12 +736,13 @@ function psAccountingSaveMappings(mysqli $conn, array $codes, array $names, stri
             $conn,
             'UPDATE accounting_account_mappings
              SET account_code = ?, account_name = ?, updated_by = ?, updated_at = ?
-             WHERE mapping_key = ?'
+             WHERE mapping_key = ? AND company_name = ?'
         );
         if (!$stmt) {
             return ['ok' => false, 'error' => 'Mappings could not be saved.'];
         }
-        mysqli_stmt_bind_param($stmt, 'sssss', $code, $name, $user, $now, $key);
+        $mapCompany = psAccountingCompany();
+        mysqli_stmt_bind_param($stmt, 'ssssss', $code, $name, $user, $now, $key, $mapCompany);
         if (!mysqli_stmt_execute($stmt)) {
             mysqli_stmt_close($stmt);
             return ['ok' => false, 'error' => 'Mappings could not be saved.'];
@@ -874,6 +950,52 @@ function psAccountingBuildPair(
 }
 
 /**
+ * 2026-11-05 split payment / split currency: sale_payments rows -> one row per method in the SALE currency, net.
+ * Tenders in another currency count at sale_amount (their value in the sale currency); the change row (is_change = 1,
+ * always cash) comes off the cash. Old single-row sales pass through unchanged.
+ */
+function psAccountingNormaliseTenders(mysqli $conn, string $invoice, array $payments): array
+{
+    $split = false;
+    foreach ($payments as $p) {
+        if ($p['tender_seq'] !== null && (count($payments) > 1 || (int)$p['is_change'] === 1)) {
+            $split = true;
+        }
+    }
+    if (!$split) {
+        return $payments;
+    }
+    $saleCur = 'USD';
+    $h = mysqli_prepare($conn, 'SELECT currency FROM online_sales_ref WHERE invoice_number = ? LIMIT 1');
+    if ($h) {
+        mysqli_stmt_bind_param($h, 's', $invoice);
+        mysqli_stmt_execute($h);
+        $hr = mysqli_fetch_assoc(mysqli_stmt_get_result($h));
+        mysqli_stmt_close($h);
+        $saleCur = trim((string)($hr['currency'] ?? '')) ?: $saleCur;
+    }
+    $byMethod = [];
+    $change = 0;
+    foreach ($payments as $p) {
+        $cents = (int)round(((float)($p['sale_amount'] ?? $p['amount_paid'])) * 100);
+        if ((int)$p['is_change'] === 1) {
+            $change += $cents;
+            continue;
+        }
+        $m = strtoupper(trim((string)$p['method']));
+        $byMethod[$m] = ($byMethod[$m] ?? 0) + $cents - (int)round(((float)$p['change_amount']) * 100);
+    }
+    if ($change > 0) {
+        $byMethod['CASH'] = ($byMethod['CASH'] ?? 0) - $change;
+    }
+    $out = [];
+    foreach ($byMethod as $m => $cents) {
+        $out[] = ['id' => 0, 'method' => $m, 'amount_paid' => psMoneyFromCents($cents), 'change_amount' => '0.00', 'currency' => $saleCur];
+    }
+    return $out;
+}
+
+/**
  * Collect SALE candidates (modern completed only).
  *
  * @return list<array>
@@ -932,7 +1054,7 @@ function psAccountingCollectSales(mysqli $conn, array $filters, array $maps, boo
         // Payments for this invoice
         $pst = mysqli_prepare(
             $conn,
-            'SELECT id, method, amount_paid, change_amount, currency
+            'SELECT id, method, amount_paid, change_amount, currency, sale_amount, is_change, tender_seq
              FROM sale_payments WHERE invoice_number = ? ORDER BY id ASC'
         );
         $payments = [];
@@ -945,6 +1067,7 @@ function psAccountingCollectSales(mysqli $conn, array $filters, array $maps, boo
             }
             mysqli_stmt_close($pst);
         }
+        $payments = psAccountingNormaliseTenders($conn, $invoice, $payments);
         if ($payments === []) {
             $exceptions[] = 'MISSING_PAYMENT';
         }
@@ -1284,8 +1407,9 @@ function psAccountingCollectRefunds(mysqli $conn, array $filters, array $maps, b
         $where, $types, $params, $filters['branches'], !empty($filters['all_branches']), 'rr.branch'
     );
     psEnsureSaleTaxColumns($conn);
+    require_once __DIR__ . '/currency.php';
     $sql = "SELECT rr.id, rr.refund_number, rr.invoice_number, rr.branch, rr.processed_amount,
-                   rr.processed_tax_amount, rr.processed_at, DATE(rr.processed_at) AS txn_date
+                   rr.processed_tax_amount, rr.processed_at, DATE(rr.processed_at) AS txn_date" . (psFxHasColumn($conn, 'sale_refund_requests', 'refund_method') ? ', rr.refund_method' : '') . "
             FROM sale_refund_requests rr
             WHERE {$where}
             ORDER BY rr.processed_at ASC, rr.id ASC";
@@ -1340,6 +1464,11 @@ function psAccountingCollectRefunds(mysqli $conn, array $filters, array $maps, b
             if ($prow) {
                 $method = strtoupper(trim((string)$prow['method']));
             }
+        }
+        // 2026-11-05: the method the money actually went back by (chosen on the refund) wins over the sale's.
+        $chosenRefund = strtoupper(trim((string)($row['refund_method'] ?? '')));
+        if ($chosenRefund !== '') {
+            $method = $chosenRefund;
         }
         if ($method === '') {
             $exceptions[] = 'MISSING_ORIGINAL_PAYMENT_METHOD';
@@ -1750,7 +1879,7 @@ function psAccountingCollectExpenses(mysqli $conn, array $filters, array $maps, 
     $sql = "SELECT e.id, e.expense_id, e.expense_name, e.amount, e.transaction_date,
                    STR_TO_DATE(e.transaction_date, '%Y-%m-%d') AS txn_date
             FROM expenses e
-            WHERE {$where}
+            WHERE {$where} AND " . psExpenseCompanySql($conn, 'e') . "
             ORDER BY txn_date ASC, e.id ASC";
     $stmt = mysqli_prepare($conn, $sql);
     if (!$stmt) {
@@ -2006,7 +2135,7 @@ function psAccountingCollectAccountPayments(mysqli $conn, array $filters, array 
     }
     $sql = "SELECT cap.id, cap.payment_number, cap.amount, cap.payment_method, cap.payment_date AS txn_date
             FROM customer_account_payments cap
-            WHERE {$where}
+            WHERE {$where} AND " . psCustomerAccountIdScopeSql($conn, 'cap.customer_account_id') . "
             ORDER BY cap.payment_date ASC, cap.id ASC";
     $stmt = mysqli_prepare($conn, $sql);
     if (!$stmt) {
@@ -2376,6 +2505,8 @@ function psAccountingCreateExportBatch(mysqli $conn, array $rawFilters, string $
         }
         $batchId = (int)mysqli_insert_id($conn);
         mysqli_stmt_close($stmt);
+        mysqli_query($conn, "UPDATE accounting_export_batches SET company_name = '"
+            . mysqli_real_escape_string($conn, psAccountingCompany()) . "' WHERE id = " . $batchId); // 2026-11-02
 
         // Re-check locks inside txn for each eligible source
         foreach ($preview['eligible_sources'] as $src) {
@@ -2581,7 +2712,7 @@ function psAccountingReverseBatch(mysqli $conn, int $batchId, string $user): arr
     try {
         $bstmt = mysqli_prepare(
             $conn,
-            'SELECT * FROM accounting_export_batches WHERE id = ? FOR UPDATE'
+            'SELECT * FROM accounting_export_batches WHERE id = ? AND ' . psAccountingBatchCompanySql($conn) . ' FOR UPDATE'
         );
         if (!$bstmt) {
             throw new RuntimeException('Batch lock failed');
@@ -2653,6 +2784,8 @@ function psAccountingReverseBatch(mysqli $conn, int $batchId, string $user): arr
             throw new RuntimeException('Reversal batch execute failed');
         }
         $newId = (int)mysqli_insert_id($conn);
+        mysqli_query($conn, "UPDATE accounting_export_batches SET company_name = '"
+            . mysqli_real_escape_string($conn, psAccountingCompany()) . "' WHERE id = " . $newId); // 2026-11-02
         mysqli_stmt_close($ins);
 
         $eres = mysqli_prepare(
@@ -2791,7 +2924,7 @@ function psAccountingGetBatch(mysqli $conn, int $batchId): array
     if (!psAccountingMayView()) {
         return ['ok' => false, 'error' => 'Please sign in.'];
     }
-    $stmt = mysqli_prepare($conn, 'SELECT * FROM accounting_export_batches WHERE id = ? LIMIT 1');
+    $stmt = mysqli_prepare($conn, 'SELECT * FROM accounting_export_batches WHERE id = ? AND ' . psAccountingBatchCompanySql($conn) . ' LIMIT 1');
     if (!$stmt) {
         return ['ok' => false, 'error' => 'Batch not found.'];
     }
@@ -2850,14 +2983,14 @@ function psAccountingListBatches(mysqli $conn, int $limit = 50): array
     $limit = max(1, min(200, $limit));
     $rows = [];
     if (psBranchSessionIsAdmin()) {
-        $sql = "SELECT * FROM accounting_export_batches ORDER BY id DESC LIMIT {$limit}";
+        $sql = 'SELECT * FROM accounting_export_batches WHERE ' . psAccountingBatchCompanySql($conn) . " ORDER BY id DESC LIMIT {$limit}";
         $res = mysqli_query($conn, $sql);
     } else {
         $home = psBranchHomeName();
         $stmt = mysqli_prepare(
             $conn,
             "SELECT * FROM accounting_export_batches
-             WHERE all_branches = 0 AND branch_filter = ?
+             WHERE all_branches = 0 AND branch_filter = ? AND " . psAccountingBatchCompanySql($conn) . "
              ORDER BY id DESC LIMIT {$limit}"
         );
         if (!$stmt) {
@@ -2980,7 +3113,7 @@ function psAccountingReconcile(mysqli $conn, array $rawFilters): array
             INNER JOIN accounting_export_batches b ON b.id = s.batch_id
             INNER JOIN accounting_export_entries e ON e.batch_id = s.batch_id
                 AND e.source_type = s.source_type AND e.source_id = s.source_id
-            WHERE {$where}";
+            WHERE {$where} AND " . psAccountingBatchCompanySql($conn, 'b');
     $stmt = mysqli_prepare($conn, $sql);
     $bySource = [];
     if ($stmt) {
