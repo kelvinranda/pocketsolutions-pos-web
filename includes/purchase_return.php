@@ -747,7 +747,7 @@ function psSavePurchaseReturn(mysqli $conn, array $payload, bool $manageTransact
     }
     $supplierName = trim((string)($header['product'] ?? ''));
     if ($supplierName === '' && $supplierId !== null) {
-        $sup = psSupplierById($conn, $supplierId);
+        $sup = psSupplierByIdForDocument($conn, $supplierId);
         if ($sup) {
             $supplierName = trim((string)$sup['supplier_name']);
         }

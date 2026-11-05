@@ -1,0 +1,11 @@
+START TRANSACTION;
+UPDATE stock_movements SET branch = 'UPTOWN~IDEAL GADGETS' WHERE branch = 'UPTOWN' AND (CONVERT(user_email USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (SELECT CONVERT(email USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM users WHERE company_name = 'IDEAL GADGETS') OR (CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (SELECT CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM goods WHERE branch = 'UPTOWN' AND company_name = 'IDEAL GADGETS') AND CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci NOT IN (SELECT CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM goods WHERE branch = 'UPTOWN' AND company_name <> 'IDEAL GADGETS')));
+UPDATE product_audit SET branch = 'UPTOWN~IDEAL GADGETS' WHERE branch = 'UPTOWN' AND CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci IN (SELECT CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM goods WHERE branch = 'UPTOWN' AND company_name = 'IDEAL GADGETS') AND CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci NOT IN (SELECT CONVERT(product_id USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM goods WHERE branch = 'UPTOWN' AND company_name <> 'IDEAL GADGETS');
+UPDATE goods SET branch = 'UPTOWN~IDEAL GADGETS' WHERE branch = 'UPTOWN' AND company_name = 'IDEAL GADGETS';
+UPDATE users SET branch = 'UPTOWN~IDEAL GADGETS' WHERE branch = 'UPTOWN' AND company_name = 'IDEAL GADGETS';
+UPDATE branchies SET branch_name = 'UPTOWN~IDEAL GADGETS' WHERE branch_name = 'UPTOWN' AND company_name = 'IDEAL GADGETS';
+UPDATE goods SET branch = 'RUSAPE~SKYTECH' WHERE branch = 'RUSAPE' AND company_name = 'SKYTECH';
+UPDATE users SET branch = 'RUSAPE~SKYTECH' WHERE branch = 'RUSAPE' AND company_name = 'SKYTECH';
+UPDATE branchies SET branch_name = 'RUSAPE~SKYTECH' WHERE branch_name = 'RUSAPE' AND company_name = 'SKYTECH';
+COMMIT;
+SELECT branch_name, company_name FROM branchies WHERE branch_name IN ('UPTOWN', 'UPTOWN~IDEAL GADGETS', 'RUSAPE', 'RUSAPE~SKYTECH') ORDER BY branch_name;

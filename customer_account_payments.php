@@ -27,7 +27,7 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/fx_report.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -107,7 +107,16 @@ mysqli_close($conn);
                         </td>
                         <td><?php echo htmlspecialchars((string)$row['customer_code'] . ' — ' . (string)$row['display_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars(psCustomerAccountPaymentMethodLabel($row['payment_method']), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="num"><?php echo htmlspecialchars((string)$row['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php
+                            // Amount in the account's currency; a payment received in another currency shows what was tendered.
+                            $acCur = psFxNormalizeCode($row['account_currency'] ?? '') ?: psFxBase($conn, psFxSessionCompany());
+                            echo htmlspecialchars(psFxFormat($conn, $row['amount'], $acCur), ENT_QUOTES, 'UTF-8');
+                            $tCur = psFxNormalizeCode($row['tender_currency'] ?? '');
+                            if ($tCur !== '' && $tCur !== $acCur && ($row['tender_amount'] ?? null) !== null) {
+                                echo '<br><small class="hint">received ' . htmlspecialchars(psFxFormat($conn, $row['tender_amount'], $tCur), ENT_QUOTES, 'UTF-8')
+                                    . (($row['tender_rate'] ?? '') !== '' ? ' at stored rate ' . htmlspecialchars(psFxrRateText((string)$row['tender_rate']), ENT_QUOTES, 'UTF-8') : '') . '</small>';
+                            }
+                        ?></td>
                         <td class="<?php echo $stClass; ?>"><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><a href="customer_account_payment_view.php?id=<?php echo (int)$row['id']; ?>">View</a></td>
                     </tr>
@@ -116,6 +125,6 @@ mysqli_close($conn);
             </table>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

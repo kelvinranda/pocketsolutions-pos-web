@@ -86,16 +86,223 @@ function psEnsureTaxRatesSchema(mysqli $conn): bool
         created_at DATETIME NOT NULL,
         updated_by VARCHAR(250) NOT NULL DEFAULT '',
         updated_at DATETIME NOT NULL,
-        UNIQUE KEY uniq_tax_rate_code_from (code, effective_from),
+        company_name VARCHAR(250) NOT NULL DEFAULT '',
+        UNIQUE KEY uniq_tax_rate_company_code_from (company_name, code, effective_from),
         KEY idx_tax_rates_code_active (code, is_active),
-        KEY idx_tax_rates_effective (effective_from, effective_to)
+        KEY idx_tax_rates_effective (effective_from, effective_to),
+        KEY idx_tax_rates_company (company_name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     if (!mysqli_query($conn, $sql)) {
         error_log('tax_rates schema was not created');
         return false;
     }
+    if (!psTaxRatesCompanyMigrate($conn)) {
+        return false;
+    }
     $ready = true;
+    psTaxEnsureCompanyHasRates($conn);
     return true;
+}
+
+/**
+ * The company whose tax rates the caller may see: stand-in user during desktop sync,
+ * otherwise the signed-in company.
+ */
+function psTaxCompany(mysqli $conn): string
+{
+    static $byActor = [];
+    if (function_exists('psActorOverride') && ($a = psActorOverride()) !== null) {
+        $key = strtolower($a);
+        if (!array_key_exists($key, $byActor)) {
+            $stmt = mysqli_prepare($conn, 'SELECT company_name FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) LIMIT 1');
+            $co = '';
+            if ($stmt) {
+                mysqli_stmt_bind_param($stmt, 's', $a);
+                mysqli_stmt_execute($stmt);
+                $r = mysqli_stmt_get_result($stmt);
+                $row = $r ? mysqli_fetch_assoc($r) : null;
+                mysqli_stmt_close($stmt);
+                $co = trim((string)($row['company_name'] ?? ''));
+            }
+            $byActor[$key] = $co;
+        }
+        return $byActor[$key];
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return '';
+    }
+    return trim((string)($_SESSION['the_company'] ?? ''));
+}
+
+/** SQL condition limiting tax_rates rows (optionally aliased) to the caller's company. */
+function psTaxCompanySql(mysqli $conn, string $alias = '', ?string $company = null): string
+{
+    $co = $company !== null ? trim($company) : psTaxCompany($conn);
+    if ($co === '') {
+        $signedIn = session_status() === PHP_SESSION_ACTIVE && trim((string)($_SESSION['logger'] ?? '')) !== '';
+        $actor = function_exists('psActorOverride') && psActorOverride() !== null;
+        return ($signedIn || $actor) ? '0' : '1';
+    }
+    $col = ($alias !== '' ? $alias . '.' : '') . 'company_name';
+    return $col . " = '" . mysqli_real_escape_string($conn, $co) . "'";
+}
+
+/** @return list<string> */
+function psTaxRealCompanies(mysqli $conn): array
+{
+    $names = [];
+    $skip = defined('PS_PLATFORM_COMPANY') ? PS_PLATFORM_COMPANY : '__platform__';
+    $sources = [];
+    $coTable = mysqli_query($conn, 'SELECT 1 FROM companies LIMIT 0');
+    if ($coTable) {
+        $sources[] = "SELECT DISTINCT TRIM(company_name) AS n FROM companies WHERE company_name IS NOT NULL AND company_name <> ''";
+    }
+    $sources[] = "SELECT DISTINCT TRIM(company_name) AS n FROM users WHERE company_name IS NOT NULL AND company_name <> ''";
+    $hasBranch = mysqli_query($conn, "SHOW COLUMNS FROM branchies LIKE 'company_name'");
+    if ($hasBranch && mysqli_num_rows($hasBranch) > 0) {
+        $sources[] = "SELECT DISTINCT TRIM(company_name) AS n FROM branchies WHERE company_name IS NOT NULL AND company_name <> ''";
+    }
+    foreach ($sources as $sql) {
+        $res = mysqli_query($conn, $sql);
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $n = trim((string)$row['n']);
+            if ($n !== '' && $n !== $skip) {
+                $names[$n] = true;
+            }
+        }
+    }
+    return array_keys($names);
+}
+
+/**
+ * 2026-10-24 — tax rates belong to one company, same as customers.
+ * Existing rows are assigned, then copied per other company so goods/sales tax codes keep resolving.
+ */
+function psTaxRatesCompanyMigrate(mysqli $conn): bool
+{
+    static $done = false;
+    if ($done) {
+        return true;
+    }
+    $cols = [];
+    $res = mysqli_query($conn, 'SHOW COLUMNS FROM tax_rates');
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $cols[strtolower((string)$r['Field'])] = true;
+    }
+    if (!isset($cols['company_name'])) {
+        if (!mysqli_query($conn, "ALTER TABLE tax_rates ADD COLUMN company_name VARCHAR(250) NOT NULL DEFAULT '', ADD KEY idx_tax_rates_company (company_name)")
+            && mysqli_errno($conn) !== 1060) {
+            error_log('tax_rates: company column was not added: #' . mysqli_errno($conn));
+            return false;
+        }
+    }
+    $old = mysqli_query($conn, "SHOW INDEX FROM tax_rates WHERE Key_name = 'uniq_tax_rate_code_from'");
+    if ($old && mysqli_num_rows($old) > 0) {
+        mysqli_query($conn, 'ALTER TABLE tax_rates DROP INDEX uniq_tax_rate_code_from');
+    }
+    $companies = psTaxRealCompanies($conn);
+    $blank = mysqli_query($conn, "SELECT id FROM tax_rates WHERE company_name = '' LIMIT 1");
+    if ($blank && mysqli_num_rows($blank) > 0 && $companies !== []) {
+        $template = $companies[0];
+        $set = mysqli_prepare($conn, "UPDATE tax_rates SET company_name = ? WHERE company_name = ''");
+        if ($set) {
+            mysqli_stmt_bind_param($set, 's', $template);
+            if (!mysqli_stmt_execute($set)) {
+                error_log('tax_rates: company backfill failed: #' . mysqli_errno($conn));
+            }
+            mysqli_stmt_close($set);
+        }
+        foreach ($companies as $co) {
+            if ($co === $template) {
+                continue;
+            }
+            $have = mysqli_prepare($conn, 'SELECT id FROM tax_rates WHERE company_name = ? LIMIT 1');
+            if (!$have) {
+                continue;
+            }
+            mysqli_stmt_bind_param($have, 's', $co);
+            mysqli_stmt_execute($have);
+            $hr = mysqli_stmt_get_result($have);
+            $exists = $hr && mysqli_fetch_assoc($hr);
+            mysqli_stmt_close($have);
+            if ($exists) {
+                continue;
+            }
+            $copy = mysqli_prepare(
+                $conn,
+                'INSERT INTO tax_rates
+                 (code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
+                  is_active, created_by, created_at, updated_by, updated_at, company_name)
+                 SELECT code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
+                        is_active, created_by, created_at, updated_by, updated_at, ?
+                 FROM tax_rates WHERE company_name = ?'
+            );
+            if ($copy) {
+                mysqli_stmt_bind_param($copy, 'ss', $co, $template);
+                if (!mysqli_stmt_execute($copy)) {
+                    error_log('tax_rates: company copy failed: #' . mysqli_errno($conn));
+                }
+                mysqli_stmt_close($copy);
+            }
+        }
+    }
+    $uniq = mysqli_query($conn, "SHOW INDEX FROM tax_rates WHERE Key_name = 'uniq_tax_rate_company_code_from'");
+    if (!$uniq || mysqli_num_rows($uniq) === 0) {
+        if (!mysqli_query($conn, 'ALTER TABLE tax_rates ADD UNIQUE KEY uniq_tax_rate_company_code_from (company_name, code, effective_from)')
+            && mysqli_errno($conn) !== 1061) {
+            error_log('tax_rates: company unique was not added: #' . mysqli_errno($conn));
+        }
+    }
+    $done = true;
+    return true;
+}
+
+/** Copy catalogue rates into a company that has none yet (new tenant after the first migrate). */
+function psTaxEnsureCompanyHasRates(mysqli $conn, ?string $company = null): void
+{
+    static $checked = [];
+    $co = $company !== null ? trim($company) : psTaxCompany($conn);
+    if ($co === '' || isset($checked[$co])) {
+        return;
+    }
+    $checked[$co] = true;
+    $have = mysqli_prepare($conn, 'SELECT id FROM tax_rates WHERE company_name = ? LIMIT 1');
+    if (!$have) {
+        return;
+    }
+    mysqli_stmt_bind_param($have, 's', $co);
+    mysqli_stmt_execute($have);
+    $hr = mysqli_stmt_get_result($have);
+    $exists = $hr && mysqli_fetch_assoc($hr);
+    mysqli_stmt_close($have);
+    if ($exists) {
+        return;
+    }
+    $src = mysqli_query(
+        $conn,
+        "SELECT company_name FROM tax_rates WHERE company_name <> '' GROUP BY company_name ORDER BY COUNT(*) DESC LIMIT 1"
+    );
+    $template = $src ? mysqli_fetch_assoc($src) : null;
+    $from = trim((string)($template['company_name'] ?? ''));
+    if ($from === '' || $from === $co) {
+        return;
+    }
+    $copy = mysqli_prepare(
+        $conn,
+        'INSERT INTO tax_rates
+         (code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
+          is_active, created_by, created_at, updated_by, updated_at, company_name)
+         SELECT code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
+                is_active, created_by, created_at, updated_by, updated_at, ?
+         FROM tax_rates WHERE company_name = ?'
+    );
+    if ($copy) {
+        mysqli_stmt_bind_param($copy, 'ss', $co, $from);
+        if (!mysqli_stmt_execute($copy)) {
+            error_log('tax_rates: late company copy failed: #' . mysqli_errno($conn));
+        }
+        mysqli_stmt_close($copy);
+    }
 }
 
 function psEnsureTaxRateAuditSchema(mysqli $conn): bool
@@ -120,6 +327,22 @@ function psEnsureTaxRateAuditSchema(mysqli $conn): bool
         error_log('tax_rate_audit schema was not created');
         return false;
     }
+    $cols = [];
+    $res = @mysqli_query($conn, 'SHOW COLUMNS FROM tax_rate_audit');
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $cols[strtolower((string)$r['Field'])] = true;
+    }
+    if (!isset($cols['company_name'])) {
+        if (!mysqli_query($conn, "ALTER TABLE tax_rate_audit ADD COLUMN company_name VARCHAR(250) NOT NULL DEFAULT ''")
+            && mysqli_errno($conn) !== 1060) {
+            error_log('tax_rate_audit company column was not added');
+            return false;
+        }
+        mysqli_query($conn, "UPDATE tax_rate_audit a
+            INNER JOIN users u ON u.email = a.actor
+            SET a.company_name = u.company_name
+            WHERE a.company_name = '' AND u.company_name <> ''");
+    }
     $ready = true;
     return true;
 }
@@ -132,20 +355,25 @@ function psEnsureTaxSettingsSchema(mysqli $conn): bool
     }
     mysqli_report(MYSQLI_REPORT_OFF);
     $sql = "CREATE TABLE IF NOT EXISTS tax_settings (
-        setting_key VARCHAR(64) NOT NULL PRIMARY KEY,
+        setting_key VARCHAR(64) NOT NULL,
         setting_value VARCHAR(250) NOT NULL DEFAULT '',
         updated_by VARCHAR(250) NOT NULL DEFAULT '',
-        updated_at DATETIME NOT NULL
+        updated_at DATETIME NOT NULL,
+        company_name VARCHAR(250) NOT NULL DEFAULT '',
+        PRIMARY KEY (company_name, setting_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     if (!mysqli_query($conn, $sql)) {
         error_log('tax_settings schema was not created');
         return false;
     }
+    if (!psTaxSettingsCompanyMigrate($conn)) {
+        return false;
+    }
     $now = date('Y-m-d H:i:s');
     $seed = mysqli_prepare(
         $conn,
-        'INSERT IGNORE INTO tax_settings (setting_key, setting_value, updated_by, updated_at)
-         VALUES (?, ?, ?, ?)'
+        'INSERT IGNORE INTO tax_settings (setting_key, setting_value, updated_by, updated_at, company_name)
+         VALUES (?, ?, ?, ?, ?)'
     );
     if (!$seed) {
         error_log('tax_settings seed prepare failed');
@@ -154,7 +382,8 @@ function psEnsureTaxSettingsSchema(mysqli $conn): bool
     $key = 'enforcement';
     $val = PS_TAX_ENFORCEMENT_OFF;
     $by = 'system';
-    mysqli_stmt_bind_param($seed, 'ssss', $key, $val, $by, $now);
+    $co = '';
+    mysqli_stmt_bind_param($seed, 'sssss', $key, $val, $by, $now, $co);
     if (!mysqli_stmt_execute($seed)) {
         mysqli_stmt_close($seed);
         error_log('tax_settings seed failed');
@@ -162,6 +391,66 @@ function psEnsureTaxSettingsSchema(mysqli $conn): bool
     }
     mysqli_stmt_close($seed);
     $ready = true;
+    return true;
+}
+
+function psTaxSettingsCompanyMigrate(mysqli $conn): bool
+{
+    static $done = false;
+    if ($done) {
+        return true;
+    }
+    $cols = [];
+    $res = mysqli_query($conn, 'SHOW COLUMNS FROM tax_settings');
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $cols[strtolower((string)$r['Field'])] = true;
+    }
+    if (!isset($cols['company_name'])) {
+        if (!mysqli_query($conn, "ALTER TABLE tax_settings ADD COLUMN company_name VARCHAR(250) NOT NULL DEFAULT ''")
+            && mysqli_errno($conn) !== 1060) {
+            error_log('tax_settings: company column was not added');
+            return false;
+        }
+    }
+    $pkCols = [];
+    $pk = mysqli_query($conn, "SHOW INDEX FROM tax_settings WHERE Key_name = 'PRIMARY'");
+    while ($pk && ($r = mysqli_fetch_assoc($pk))) {
+        $pkCols[] = strtolower((string)$r['Column_name']);
+    }
+    if ($pkCols === ['setting_key']) {
+        if (!mysqli_query($conn, 'ALTER TABLE tax_settings DROP PRIMARY KEY')
+            || (!mysqli_query($conn, 'ALTER TABLE tax_settings ADD PRIMARY KEY (company_name, setting_key)')
+                && mysqli_errno($conn) !== 1068 && mysqli_errno($conn) !== 1061)) {
+            error_log('tax_settings: company primary key was not updated: #' . mysqli_errno($conn));
+            return false;
+        }
+    }
+    foreach (psTaxRealCompanies($conn) as $co) {
+        $have = mysqli_prepare($conn, 'SELECT setting_key FROM tax_settings WHERE company_name = ? LIMIT 1');
+        if (!$have) {
+            continue;
+        }
+        mysqli_stmt_bind_param($have, 's', $co);
+        mysqli_stmt_execute($have);
+        $hr = mysqli_stmt_get_result($have);
+        $exists = $hr && mysqli_fetch_assoc($hr);
+        mysqli_stmt_close($have);
+        if ($exists) {
+            continue;
+        }
+        $copy = mysqli_prepare(
+            $conn,
+            'INSERT IGNORE INTO tax_settings (setting_key, setting_value, updated_by, updated_at, company_name)
+             SELECT setting_key, setting_value, updated_by, updated_at, ?
+             FROM tax_settings WHERE company_name = \'\''
+        );
+        if ($copy) {
+            mysqli_stmt_bind_param($copy, 's', $co);
+            mysqli_stmt_execute($copy);
+            mysqli_stmt_close($copy);
+        }
+    }
+    $done = true;
     return true;
 }
 
@@ -217,43 +506,45 @@ function psTaxWriteAudit(mysqli $conn, $taxRateId, string $code, string $action,
     }
     $now = date('Y-m-d H:i:s');
     $id = $taxRateId === null ? null : (int)$taxRateId;
+    $company = session_status() === PHP_SESSION_ACTIVE ? trim((string)($_SESSION['the_company'] ?? '')) : '';
 
     if ($id === null) {
         $stmt = mysqli_prepare(
             $conn,
-            'INSERT INTO tax_rate_audit (tax_rate_id, code, action, actor, details, created_at)
-             VALUES (NULL, ?, ?, ?, ?, ?)'
+            'INSERT INTO tax_rate_audit (tax_rate_id, code, action, actor, details, created_at, company_name)
+             VALUES (NULL, ?, ?, ?, ?, ?, ?)'
         );
         if (!$stmt) {
             return false;
         }
-        mysqli_stmt_bind_param($stmt, 'sssss', $code, $action, $actor, $json, $now);
+        mysqli_stmt_bind_param($stmt, 'ssssss', $code, $action, $actor, $json, $now, $company);
     } else {
         $stmt = mysqli_prepare(
             $conn,
-            'INSERT INTO tax_rate_audit (tax_rate_id, code, action, actor, details, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO tax_rate_audit (tax_rate_id, code, action, actor, details, created_at, company_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
         );
         if (!$stmt) {
             return false;
         }
-        mysqli_stmt_bind_param($stmt, 'isssss', $id, $code, $action, $actor, $json, $now);
+        mysqli_stmt_bind_param($stmt, 'issssss', $id, $code, $action, $actor, $json, $now, $company);
     }
     $ok = mysqli_stmt_execute($stmt);
     mysqli_stmt_close($stmt);
     return (bool)$ok;
 }
 
-function psTaxGetSetting(mysqli $conn, string $key, string $default = ''): string
+function psTaxGetSetting(mysqli $conn, string $key, string $default = '', ?string $company = null): string
 {
     if (!psEnsureTaxSettingsSchema($conn)) {
         return $default;
     }
-    $stmt = mysqli_prepare($conn, 'SELECT setting_value FROM tax_settings WHERE setting_key = ? LIMIT 1');
+    $co = $company !== null ? trim($company) : psTaxCompany($conn);
+    $stmt = mysqli_prepare($conn, 'SELECT setting_value FROM tax_settings WHERE setting_key = ? AND company_name = ? LIMIT 1');
     if (!$stmt) {
         return $default;
     }
-    mysqli_stmt_bind_param($stmt, 's', $key);
+    mysqli_stmt_bind_param($stmt, 'ss', $key, $co);
     if (!mysqli_stmt_execute($stmt)) {
         mysqli_stmt_close($stmt);
         return $default;
@@ -261,10 +552,38 @@ function psTaxGetSetting(mysqli $conn, string $key, string $default = ''): strin
     $res = mysqli_stmt_get_result($stmt);
     $row = $res ? mysqli_fetch_assoc($res) : null;
     mysqli_stmt_close($stmt);
-    if (!$row) {
+    if ($row) {
+        return (string)$row['setting_value'];
+    }
+    if ($co === '') {
         return $default;
     }
-    return (string)$row['setting_value'];
+    $tmpl = mysqli_prepare($conn, "SELECT setting_value FROM tax_settings WHERE setting_key = ? AND company_name = '' LIMIT 1");
+    if (!$tmpl) {
+        return $default;
+    }
+    mysqli_stmt_bind_param($tmpl, 's', $key);
+    mysqli_stmt_execute($tmpl);
+    $tr = mysqli_stmt_get_result($tmpl);
+    $trow = $tr ? mysqli_fetch_assoc($tr) : null;
+    mysqli_stmt_close($tmpl);
+    if (!$trow) {
+        return $default;
+    }
+    $now = date('Y-m-d H:i:s');
+    $ins = mysqli_prepare(
+        $conn,
+        'INSERT IGNORE INTO tax_settings (setting_key, setting_value, updated_by, updated_at, company_name)
+         VALUES (?, ?, ?, ?, ?)'
+    );
+    if ($ins) {
+        $by = 'system';
+        $val = (string)$trow['setting_value'];
+        mysqli_stmt_bind_param($ins, 'sssss', $key, $val, $by, $now, $co);
+        mysqli_stmt_execute($ins);
+        mysqli_stmt_close($ins);
+    }
+    return (string)$trow['setting_value'];
 }
 
 /**
@@ -286,17 +605,18 @@ function psTaxSetSetting(mysqli $conn, string $key, string $value, string $actor
         return ['ok' => false, 'error' => 'Tax setting value is too long.'];
     }
     $now = date('Y-m-d H:i:s');
+    $co = psTaxCompany($conn);
     $stmt = mysqli_prepare(
         $conn,
-        'INSERT INTO tax_settings (setting_key, setting_value, updated_by, updated_at)
-         VALUES (?, ?, ?, ?)
+        'INSERT INTO tax_settings (setting_key, setting_value, updated_by, updated_at, company_name)
+         VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value),
             updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)'
     );
     if (!$stmt) {
         return ['ok' => false, 'error' => 'Tax settings could not be saved.'];
     }
-    mysqli_stmt_bind_param($stmt, 'ssss', $key, $value, $actor, $now);
+    mysqli_stmt_bind_param($stmt, 'sssss', $key, $value, $actor, $now, $co);
     $ok = mysqli_stmt_execute($stmt);
     mysqli_stmt_close($stmt);
     if (!$ok) {
@@ -306,9 +626,9 @@ function psTaxSetSetting(mysqli $conn, string $key, string $value, string $actor
     return ['ok' => true];
 }
 
-function psTaxGetEnforcement(mysqli $conn): string
+function psTaxGetEnforcement(mysqli $conn, ?string $company = null): string
 {
-    $v = strtoupper(trim(psTaxGetSetting($conn, 'enforcement', PS_TAX_ENFORCEMENT_OFF)));
+    $v = strtoupper(trim(psTaxGetSetting($conn, 'enforcement', PS_TAX_ENFORCEMENT_OFF, $company)));
     return $v === PS_TAX_ENFORCEMENT_REQUIRED ? PS_TAX_ENFORCEMENT_REQUIRED : PS_TAX_ENFORCEMENT_OFF;
 }
 
@@ -405,6 +725,10 @@ function psTaxCreateRate(mysqli $conn, array $input, string $actor): array
     if (!psEnsureTaxModule($conn)) {
         return ['ok' => false, 'error' => 'Tax configuration could not be saved.'];
     }
+    $rateCompany = psTaxCompany($conn);
+    if ($rateCompany === '') {
+        return ['ok' => false, 'error' => 'Select a company before adding tax rates.'];
+    }
     $v = psTaxValidateRateInput($input, false);
     if (!$v['ok']) {
         return $v;
@@ -428,15 +752,15 @@ function psTaxCreateRate(mysqli $conn, array $input, string $actor): array
             $conn,
             'INSERT INTO tax_rates
              (code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
-              is_active, created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)'
+              is_active, created_by, created_at, updated_by, updated_at, company_name)
+             VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)'
         );
         if (!$stmt) {
             return ['ok' => false, 'error' => 'Tax configuration could not be saved.'];
         }
         mysqli_stmt_bind_param(
             $stmt,
-            'ssssssissss',
+            'ssssssisssss',
             $row['code'],
             $row['description'],
             $row['classification'],
@@ -447,22 +771,23 @@ function psTaxCreateRate(mysqli $conn, array $input, string $actor): array
             $actor,
             $now,
             $actor,
-            $now
+            $now,
+            $rateCompany
         );
     } else {
         $stmt = mysqli_prepare(
             $conn,
             'INSERT INTO tax_rates
              (code, description, classification, rate_percent, pricing_mode, effective_from, effective_to,
-              is_active, created_by, created_at, updated_by, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+              is_active, created_by, created_at, updated_by, updated_at, company_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         if (!$stmt) {
             return ['ok' => false, 'error' => 'Tax configuration could not be saved.'];
         }
         mysqli_stmt_bind_param(
             $stmt,
-            'sssssssissss',
+            'sssssssisssss',
             $row['code'],
             $row['description'],
             $row['classification'],
@@ -474,7 +799,8 @@ function psTaxCreateRate(mysqli $conn, array $input, string $actor): array
             $actor,
             $now,
             $actor,
-            $now
+            $now,
+            $rateCompany
         );
     }
     $ok = mysqli_stmt_execute($stmt);
@@ -596,7 +922,7 @@ function psTaxGetRateById(mysqli $conn, int $id): ?array
     if (!psEnsureTaxRatesSchema($conn) || $id < 1) {
         return null;
     }
-    $stmt = mysqli_prepare($conn, 'SELECT * FROM tax_rates WHERE id = ? LIMIT 1');
+    $stmt = mysqli_prepare($conn, 'SELECT * FROM tax_rates WHERE id = ? AND ' . psTaxCompanySql($conn) . ' LIMIT 1');
     if (!$stmt) {
         return null;
     }
@@ -619,9 +945,10 @@ function psTaxListRates(mysqli $conn, bool $activeOnly = false): array
     if (!psEnsureTaxRatesSchema($conn)) {
         return [];
     }
-    $sql = 'SELECT * FROM tax_rates';
+    psTaxEnsureCompanyHasRates($conn);
+    $sql = 'SELECT * FROM tax_rates WHERE ' . psTaxCompanySql($conn);
     if ($activeOnly) {
-        $sql .= ' WHERE is_active = 1';
+        $sql .= ' AND is_active = 1';
     }
     $sql .= ' ORDER BY code ASC, effective_from DESC, id DESC';
     $res = mysqli_query($conn, $sql);
@@ -642,9 +969,11 @@ function psTaxListDistinctCodes(mysqli $conn, bool $activeOnly = true): array
     if (!psEnsureTaxRatesSchema($conn)) {
         return [];
     }
+    psTaxEnsureCompanyHasRates($conn);
+    $scope = psTaxCompanySql($conn);
     $sql = $activeOnly
-        ? 'SELECT code, MAX(description) AS description FROM tax_rates WHERE is_active = 1 GROUP BY code ORDER BY code ASC'
-        : 'SELECT code, MAX(description) AS description FROM tax_rates GROUP BY code ORDER BY code ASC';
+        ? 'SELECT code, MAX(description) AS description FROM tax_rates WHERE is_active = 1 AND ' . $scope . ' GROUP BY code ORDER BY code ASC'
+        : 'SELECT code, MAX(description) AS description FROM tax_rates WHERE ' . $scope . ' GROUP BY code ORDER BY code ASC';
     $res = mysqli_query($conn, $sql);
     $rows = [];
     if ($res) {
@@ -671,6 +1000,7 @@ function psTaxFindOverlappingRate(
     $toBound = $to === null || $to === '' ? '9999-12-31' : $to;
     $sql = 'SELECT id FROM tax_rates
             WHERE code = ?
+              AND ' . psTaxCompanySql($conn) . '
               AND effective_from <= ?
               AND IFNULL(effective_to, \'9999-12-31\') >= ?';
     if ($excludeId !== null && $excludeId > 0) {
@@ -697,7 +1027,7 @@ function psTaxFindOverlappingRate(
  *
  * @return array{ok:bool,rate?:array,error?:string}
  */
-function psTaxResolveEffectiveRate(mysqli $conn, string $code, string $txnDate): array
+function psTaxResolveEffectiveRate(mysqli $conn, string $code, string $txnDate, ?string $company = null): array
 {
     $code = strtoupper(trim($code));
     $txnDate = trim($txnDate);
@@ -707,10 +1037,11 @@ function psTaxResolveEffectiveRate(mysqli $conn, string $code, string $txnDate):
     if (!psEnsureTaxRatesSchema($conn)) {
         return ['ok' => false, 'error' => 'Tax configuration is not available.'];
     }
+    psTaxEnsureCompanyHasRates($conn, $company);
     $stmt = mysqli_prepare(
         $conn,
         'SELECT * FROM tax_rates
-         WHERE code = ? AND is_active = 1
+         WHERE code = ? AND is_active = 1 AND ' . psTaxCompanySql($conn, '', $company) . '
            AND effective_from <= ?
            AND (effective_to IS NULL OR effective_to >= ?)
          ORDER BY effective_from DESC, id DESC
@@ -848,7 +1179,9 @@ function psTaxApplyToSaleLines(mysqli $conn, array $lines, string $branch, strin
         if ($productId === '' || $unitCents === null || $unitCents < 0) {
             return ['ok' => false, 'error' => 'A product price is not valid.'];
         }
-        $preDiscountCents = psLineCents($unitCents, $qty);
+        // 2026-10-28 packs: a line sold in a pack carries its exact amount (packs × pack price) in pre_cents;
+        // its quantity is in base units and its price per base unit is rounded, so price × quantity is not used.
+        $preDiscountCents = isset($line['pre_cents']) ? (int)$line['pre_cents'] : psLineCents($unitCents, $qty);
         if ($preDiscountCents === null || $preDiscountCents < 0) {
             return ['ok' => false, 'error' => 'Sale total is not valid.'];
         }
@@ -996,7 +1329,7 @@ function psTaxSetProductCode(mysqli $conn, int $goodsId, string $branch, $taxCod
             return ['ok' => false, 'error' => 'Tax code is not valid.'];
         }
         // Must exist as a configured code (any row); effectiveness checked at sale time.
-        $chk = mysqli_prepare($conn, 'SELECT id FROM tax_rates WHERE code = ? LIMIT 1');
+        $chk = mysqli_prepare($conn, 'SELECT id FROM tax_rates WHERE code = ? AND ' . psTaxCompanySql($conn) . ' LIMIT 1');
         if (!$chk) {
             return ['ok' => false, 'error' => 'Tax code could not be saved.'];
         }
@@ -1170,15 +1503,31 @@ function psTaxListAudit(mysqli $conn, int $limit = 100): array
         return [];
     }
     $limit = max(1, min(500, $limit));
-    $res = mysqli_query(
-        $conn,
-        'SELECT * FROM tax_rate_audit ORDER BY id DESC LIMIT ' . (int)$limit
-    );
+    $super = function_exists('psPlatformSessionIsSuperAdmin') && psPlatformSessionIsSuperAdmin()
+        && !(function_exists('psPlatformIsActing') && psPlatformIsActing());
+    if ($super) {
+        $res = mysqli_query($conn, 'SELECT * FROM tax_rate_audit ORDER BY id DESC LIMIT ' . (int)$limit);
+    } else {
+        $company = session_status() === PHP_SESSION_ACTIVE ? trim((string)($_SESSION['the_company'] ?? '')) : '';
+        if ($company === '') {
+            return [];
+        }
+        $stmt = mysqli_prepare($conn, 'SELECT * FROM tax_rate_audit WHERE company_name = ? ORDER BY id DESC LIMIT ' . (int)$limit);
+        if (!$stmt) {
+            return [];
+        }
+        mysqli_stmt_bind_param($stmt, 's', $company);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+    }
     $rows = [];
     if ($res) {
         while ($row = mysqli_fetch_assoc($res)) {
             $rows[] = $row;
         }
+    }
+    if (isset($stmt) && $stmt) {
+        mysqli_stmt_close($stmt);
     }
     return $rows;
 }

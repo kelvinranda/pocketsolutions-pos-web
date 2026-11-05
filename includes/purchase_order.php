@@ -1234,7 +1234,7 @@ function psApprovePurchaseOrder(mysqli $conn, int $id): array
     if ($load['lines'] === []) {
         return ['ok' => false, 'error' => 'A purchase order needs at least one line before approval.'];
     }
-    $supplier = psSupplierById($conn, (int)$header['supplier_id']);
+    $supplier = psSupplierByIdForDocument($conn, (int)$header['supplier_id']);
     if ($supplier === null || !psSupplierStatusIsActive($supplier['status'] ?? '')) {
         return ['ok' => false, 'error' => 'The supplier must be active to approve this purchase order.'];
     }

@@ -5,6 +5,7 @@ require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/stock_movement.php';
 require_once __DIR__ . '/includes/product_master.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 // Create connection
 $conn = mysqli_connect($servername, $username, $password, $dbname);
@@ -76,6 +77,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             die("No products submitted.");
         }
 
+        // 2026-10-28 packs: quantities / costs entered per pack become base units (whole units checked).
+        $tfCv = psPackConvertRows($conn, trim((string)($_SESSION['the_company'] ?? '')), (array)($_POST['product_id'] ?? []), (array)($_POST['quantity'] ?? []),
+            (array)($_POST['unit'] ?? []), (array)($_POST['line_cost'] ?? []));
+        if (empty($tfCv['ok'])) {
+            die(htmlspecialchars((string)$tfCv['error'], ENT_QUOTES, 'UTF-8'));
+        }
+        $_POST['quantity'] = $tfCv['qtys'];
+        if ($tfCv['costs']) {
+            $_POST['line_cost'] = $tfCv['costs'];
+        }
         $saved = psSaveStockTransfer($conn, [
             'date' => $date,
             'invoice_number' => $invoice_number,
@@ -140,6 +151,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             document.getElementById("product_" + index).value = product;
             document.getElementById("line_cost_" + index).value = cost_price; // Set line cost based on selected product cost price
             document.getElementById("suggestions_" + index).style.display = "none";
+            const unitSel = document.getElementById("unit_" + index);
+            if (unitSel && typeof psPackFill === 'function') psPackFill(unitSel, product_id);
         }
 
         function addProductRow() {
@@ -150,7 +163,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         <input type="hidden" id="product_id_${productCount}" name="product_id[]" required>
                         <div id="suggestions_${productCount}" class="suggestions"></div>
                     </td>
-                    <td><input type="number" name="quantity[]" placeholder="Quantity" required></td>
+                    <td><input type="number" name="quantity[]" placeholder="Quantity" required>
+                        <select id="unit_${productCount}" name="unit[]" aria-label="Unit" hidden><option value="base"></option></select></td>
                     <td><input type="number" step="0.01" id="line_cost_${productCount}" name="line_cost[]" placeholder="Line Cost" required></td>
                     <td><input type="number" step="0.01" name="vat[]" placeholder="VAT" value="0" required></td>
                     <td><button type="button" class="delete-row" onclick="deleteProductRow(this)">Delete</button></td>
@@ -200,6 +214,7 @@ if (sendingBranch === receivingBranch) {
             const products = [];
             const productIds = [];
             const quantities = [];
+            const units = [];
             const lineCosts = [];
             const vats = [];
             let totalCosts = [];  // Array to hold the total costs for each product
@@ -212,6 +227,8 @@ if (sendingBranch === receivingBranch) {
                 const quantity = parseFloat(row.querySelector('input[name="quantity[]"]').value);
                 const lineCost = parseFloat(row.querySelector('input[name="line_cost[]"]').value);
                 const vat = parseFloat(row.querySelector('input[name="vat[]"]').value);
+                const unitSel = row.querySelector('select[name="unit[]"]');
+                units.push(unitSel && !unitSel.hidden ? unitSel.value : 'base');
                 
                 products.push(productName);
                 productIds.push(productIdInput ? productIdInput.value : '');
@@ -263,6 +280,7 @@ if (sendingBranch === receivingBranch) {
                 lineFields += `<input type="hidden" name="quantity[]" value="${psAttr(quantities[i])}">`;
                 lineFields += `<input type="hidden" name="line_cost[]" value="${psAttr(lineCosts[i])}">`;
                 lineFields += `<input type="hidden" name="vat[]" value="${psAttr(vats[i])}">`;
+                lineFields += `<input type="hidden" name="unit[]" value="${psAttr(units[i])}">`;
             }
 
            previewHtml += `<form method="POST" action="">
@@ -312,7 +330,8 @@ if (sendingBranch === receivingBranch) {
                             <input type="hidden" id="product_id_0" name="product_id[]" required>
                             <div id="suggestions_0" class="suggestions"></div>
                         </td>
-                        <td><input type="number" name="quantity[]" placeholder="Quantity" required></td>
+                        <td><input type="number" name="quantity[]" placeholder="Quantity" required>
+                            <select id="unit_0" name="unit[]" aria-label="Unit" hidden><option value="base"></option></select></td>
                         <td><input type="number" step="0.01" id="line_cost_0" name="line_cost[]" placeholder="Line Cost" required></td>
                         <td><input type="number" step="0.01" name="vat[]" placeholder="VAT" value="0" required></td>
                         <td><button type="button" class="delete-row" onclick="deleteProductRow(this)">Delete</button></td>
@@ -351,6 +370,7 @@ if (sendingBranch === receivingBranch) {
 
         <div id="previewContainer"></div>
     </div>
+<?php echo psPackUnitAssets($conn, trim((string)($_SESSION['the_company'] ?? ''))); ?>
 <?php ps_close(); ?>
 </body>
 </html>

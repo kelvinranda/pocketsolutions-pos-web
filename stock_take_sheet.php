@@ -5,6 +5,7 @@ require 'vendor/autoload.php'; // Include Composer's autoloader
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/stock_movement.php';
 require_once __DIR__ . '/includes/product_master.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 use Dompdf\Dompdf;
 use Dompdf\Options;
@@ -96,10 +97,45 @@ $inv = date('d-m-Y') . rand(1, 1000);
 
 // Handle updates to the items
 if (isset($_POST['update'])) {
-    $saved = psSaveStockTake($conn, [
+    // 2026-10-28 packs: a count in packs (+ loose single units) becomes base units; whole units checked.
+    $countBase = (string)($_POST['physical_stock'] ?? '');
+    $countErr = null;
+    $stCompany = trim((string)($_SESSION['the_company'] ?? ''));
+    $stPid = trim((string)($_POST['product_id'] ?? ''));
+    $stUnit = trim((string)($_POST['count_unit'] ?? ''));
+    $stLoose = trim((string)($_POST['count_loose'] ?? ''));
+    if ($stPid !== '' && ($stUnit !== '' && $stUnit !== 'base' || $stLoose !== '')) {
+        $packPart = 0;
+        if (trim($countBase) !== '' && (psStockMilli(trim($countBase)) ?? 0) > 0) {
+            $cv = psPackConvertRows($conn, $stCompany, [$stPid], [$countBase], [$stUnit]);
+            if (empty($cv['ok'])) {
+                $countErr = $cv['error'];
+            } else {
+                $packPart = (int)psStockMilli((string)$cv['qtys'][0]);
+            }
+        } elseif (trim($countBase) !== '' && psStockMilli(trim($countBase)) === null) {
+            $countErr = 'Enter the count as a number.';
+        }
+        $loosePart = 0;
+        if ($countErr === null && $stLoose !== '') {
+            $cl = psPackConvertRows($conn, $stCompany, [$stPid], [$stLoose], ['base']);
+            if (empty($cl['ok'])) {
+                $countErr = $cl['error'];
+            } else {
+                $loosePart = (int)psStockMilli((string)$cl['qtys'][0]);
+            }
+        }
+        $countBase = psStockQtyPlain(psMilliToStock($packPart + $loosePart));
+    } elseif ($stPid !== '' && trim($countBase) !== '' && (psStockMilli(trim($countBase)) ?? 0) > 0) {
+        $cv = psPackConvertRows($conn, $stCompany, [$stPid], [$countBase], ['base']);
+        if (empty($cv['ok'])) {
+            $countErr = $cv['error'];
+        }
+    }
+    $saved = $countErr !== null ? ['ok' => false, 'error' => $countErr] : psSaveStockTake($conn, [
         'token' => $_POST['stock_take_token'] ?? '',
         'item_id' => $_POST['item_id'] ?? '',
-        'physical_stock' => $_POST['physical_stock'] ?? '',
+        'physical_stock' => $countBase,
         'product_id' => $_POST['product_id'] ?? '',
         'branch' => $stock_take_branch,
     ]);
@@ -184,7 +220,7 @@ if (isset($_POST['print'])) {
     exit(); // Ensure the script stops after generating the PDF
 }
 
-mysqli_close($conn);
+// 2026-10-28: connection kept for the unit pickers; closed at the end of the page.
 ?>
 
 <!DOCTYPE html>
@@ -253,6 +289,10 @@ if ($stock_take_token === '') {
                     <td>
                         <input type="number" name="physical_stock" placeholder="Enter qty" required min="0" step="0.001"
                                oninput="calculateVariance(<?php echo json_encode((string)$item['id']); ?>, this, <?php echo json_encode((float)$item['qty']); ?>)">
+                        <?php $stSel = psPackUnitSelect($conn, trim((string)($_SESSION['the_company'] ?? '')), (string)($item['product_id'] ?? ''), 'count_unit');
+                        if ($stSel !== ''): ?>
+                            <?php echo $stSel; ?> + <input type="number" name="count_loose" placeholder="loose" min="0" step="1" style="width:6em" title="Loose single units counted outside full packs">
+                        <?php endif; ?>
                         <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
                         <input type="hidden" name="product_id" value="<?php echo htmlspecialchars((string)($item['product_id'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>">
                         <input type="hidden" name="stock_take_token" value="<?php echo htmlspecialchars($stock_take_token, ENT_QUOTES, 'UTF-8'); ?>">
@@ -282,6 +322,6 @@ if ($stock_take_token === '') {
     }
 </script>
 
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

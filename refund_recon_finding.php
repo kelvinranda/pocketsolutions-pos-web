@@ -44,6 +44,20 @@ if (!$signedIn) {
     }
 }
 
+$rfCur = '';
+$rfInv = (string)($detail['finding']['invoice_number'] ?? '');
+if ($rfInv !== '') {
+    require_once __DIR__ . '/includes/currency.php';
+    $cst = mysqli_prepare($conn, 'SELECT currency FROM online_sales_ref WHERE invoice_number = ? LIMIT 1');
+    if ($cst) {
+        $inv = $rfInv;
+        mysqli_stmt_bind_param($cst, 's', $inv);
+        mysqli_stmt_execute($cst);
+        $cr = mysqli_fetch_assoc(mysqli_stmt_get_result($cst));
+        mysqli_stmt_close($cst);
+        $rfCur = $cr ? (psFxNormalizeCode($cr['currency'] ?? '') ?: psFxLegacyCurrency() . ' (legacy)') : '';
+    }
+}
 mysqli_close($conn);
 
 $finding = $detail['finding'] ?? null;
@@ -117,7 +131,7 @@ $backQs = http_build_query([
                     · Actual: <?php echo htmlspecialchars(psSaleRefundReconReportDisplayValue($finding['qty_actual'] ?? null), ENT_QUOTES, 'UTF-8'); ?>
                     · Diff: <?php echo htmlspecialchars(psSaleRefundReconReportDisplayValue($finding['qty_diff'] ?? null), ENT_QUOTES, 'UTF-8'); ?>
                 </dd>
-                <dt>Expected vs observed (amount)</dt>
+                <dt>Expected vs observed (amount<?php echo $rfCur !== '' ? ', ' . htmlspecialchars($rfCur, ENT_QUOTES, 'UTF-8') : ''; ?>)</dt>
                 <dd>
                     Expected: <?php echo htmlspecialchars(psSaleRefundReconReportDisplayValue($finding['amount_expected'] ?? null, $sev === 'INCONCLUSIVE' ? 'Inconclusive' : 'Not available'), ENT_QUOTES, 'UTF-8'); ?>
                     · Actual: <?php echo htmlspecialchars(psSaleRefundReconReportDisplayValue($finding['amount_actual'] ?? null), ENT_QUOTES, 'UTF-8'); ?>

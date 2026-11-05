@@ -8,6 +8,7 @@ if (!$conn) {
     die('Connection failed.');
 }
 require_once __DIR__ . '/includes/stock_movement.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 $allowed = psSessionStockBranches($conn);
 $company = trim((string)($_SESSION['the_company'] ?? ''));
@@ -32,6 +33,7 @@ $postedDirection = 'increase';
 $postedQuantity = '';
 $postedReason = '';
 $postedDetail = '';
+$postedUnit = '';
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     if (!psCsrfValidate()) {
@@ -43,17 +45,30 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $postedReason = trim((string)($_POST['reason'] ?? ''));
         $postedDetail = trim((string)($_POST['reason_detail'] ?? ''));
         $postedBranch = trim((string)($_POST['branch'] ?? ''));
+        $postedUnit = trim((string)($_POST['unit'] ?? ''));
         if (isset($allowed[$postedBranch])) {
             $branch = $postedBranch;
         }
-        $saved = psSaveStockAdjustment($conn, [
+        // 2026-10-28 packs: a quantity entered in packs becomes base units (whole-unit products checked too).
+        $ledgerQty = $postedQuantity;
+        $ledgerDetail = $postedDetail;
+        $conv = psPackConvertRows($conn, $company, [$postedProduct], [$postedQuantity], [$postedUnit]);
+        if (empty($conv['ok'])) {
+            $saved = ['ok' => false, 'error' => $conv['error']];
+        } else {
+            $ledgerQty = (string)$conv['qtys'][0];
+            if (!empty($conv['notes'][0])) {
+                $ledgerDetail = trim(substr($postedDetail . ' [' . $conv['notes'][0] . ']', 0, 300));
+            }
+        }
+        $saved = $saved ?? psSaveStockAdjustment($conn, [
             'token' => $_POST['adjustment_token'] ?? '',
             'product_id' => $postedProduct,
             'branch' => $postedBranch,
             'direction' => $postedDirection,
-            'quantity' => $postedQuantity,
+            'quantity' => $ledgerQty,
             'reason' => $postedReason,
-            'reason_detail' => $postedDetail,
+            'reason_detail' => $ledgerDetail,
         ]);
         if (!empty($saved['ok'])) {
             $_SESSION['ps_adjustment_notice'] = 'Stock adjustment saved.';
@@ -74,6 +89,7 @@ if ($token === '') {
 
 $products = $branch !== '' ? psAdjustmentProductChoices($conn, $branch, $company) : [];
 $activeBranch = $branch !== '' ? $branch : 'No branch selected';
+$packAssets = psPackUnitAssets($conn, $company);
 
 mysqli_close($conn);
 ?>
@@ -151,6 +167,7 @@ mysqli_close($conn);
                     Quantity
                     <input type="text" name="quantity" inputmode="decimal" value="<?php echo htmlspecialchars($postedQuantity, ENT_QUOTES, 'UTF-8'); ?>" required>
                 </label>
+                <select name="unit" data-pack-unit-for="product_id" aria-label="Unit" hidden><option value="<?php echo htmlspecialchars($postedUnit, ENT_QUOTES, 'UTF-8'); ?>"></option></select>
             </p>
             <p>
                 <label>
@@ -173,6 +190,7 @@ mysqli_close($conn);
             <p><button type="submit">Save adjustment</button></p>
         </form>
     <?php endif; ?>
+<?php echo $packAssets; ?>
 <?php ps_close(); ?>
 </body>
 </html>

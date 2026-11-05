@@ -82,7 +82,6 @@ $submitToken = ($signedIn && $payment && strtoupper((string)$payment['status']) 
     ? psCapIssueSubmitToken()
     : '';
 
-mysqli_close($conn);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -142,12 +141,28 @@ mysqli_close($conn);
                 <dd><?php echo htmlspecialchars((string)$payment['payment_date'], ENT_QUOTES, 'UTF-8'); ?></dd>
                 <dt>Method</dt>
                 <dd><?php echo htmlspecialchars(psCustomerAccountPaymentMethodLabel($payment['payment_method']), ENT_QUOTES, 'UTF-8'); ?></dd>
+                <?php
+                // Full currency details of the payment (account currency, what was tendered, stored rates, base amount).
+                require_once __DIR__ . '/includes/fx_report.php';
+                $pvBase = psFxBase($conn, psFxSessionCompany());
+                $pvCur = $account ? psCustomerAccountRowCurrency($conn, $account) : $pvBase;
+                $pvF = static fn($v, $c) => htmlspecialchars(psFxFormat($conn, $v ?? 0, $c), ENT_QUOTES, 'UTF-8');
+                $pvTender = psFxNormalizeCode($payment['tender_currency'] ?? '');
+                ?>
                 <dt>Amount</dt>
-                <dd class="num mono"><?php echo htmlspecialchars(number_format((float)$payment['amount'], 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?></dd>
+                <dd class="num mono"><?php echo $pvF($payment['amount'], $pvCur); ?> <span class="hint">(account currency <?php echo htmlspecialchars($pvCur, ENT_QUOTES, 'UTF-8'); ?>)</span></dd>
+                <?php if ($pvTender !== '' && $pvTender !== $pvCur && ($payment['tender_amount'] ?? null) !== null): ?>
+                <dt>Received</dt>
+                <dd class="num"><?php echo $pvF($payment['tender_amount'], $pvTender); ?><?php if (($payment['tender_rate'] ?? '') !== ''): ?> <span class="hint">— converted at the stored rate <?php echo htmlspecialchars('1 ' . $pvTender . ' = ' . psFxrRateText((string)$payment['tender_rate']) . ' ' . $pvCur, ENT_QUOTES, 'UTF-8'); ?> (rate at the time of payment)</span><?php endif; ?></dd>
+                <?php endif; ?>
+                <?php if ($pvCur !== $pvBase): ?>
+                <dt>In <?php echo htmlspecialchars($pvBase, ENT_QUOTES, 'UTF-8'); ?></dt>
+                <dd class="num"><?php echo ($payment['base_amount'] ?? null) !== null ? $pvF($payment['base_amount'], $pvBase) . (($payment['fx_rate'] ?? '') !== '' ? ' <span class="hint">(stored rate 1 ' . htmlspecialchars($pvBase . ' = ' . psFxrRateText((string)$payment['fx_rate']) . ' ' . $pvCur, ENT_QUOTES, 'UTF-8') . ')</span>' : '') : '<span class="fxa-tag fxa-tag-warn">⚠ no stored rate</span>'; ?></dd>
+                <?php endif; ?>
                 <dt>Allocated</dt>
-                <dd class="num"><?php echo htmlspecialchars((string)$unalloc['allocated'], ENT_QUOTES, 'UTF-8'); ?></dd>
+                <dd class="num"><?php echo $pvF($unalloc['allocated'], $pvCur); ?></dd>
                 <dt>Unallocated</dt>
-                <dd class="num"><?php echo htmlspecialchars((string)$unalloc['unallocated'], ENT_QUOTES, 'UTF-8'); ?></dd>
+                <dd class="num"><?php echo $pvF($unalloc['unallocated'], $pvCur); ?></dd>
                 <dt>Status</dt>
                 <dd class="<?php echo $stClass; ?>"><?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?></dd>
                 <dt>Reference</dt>
@@ -191,7 +206,7 @@ mysqli_close($conn);
                     <?php foreach ($allocRows as $ar): ?>
                         <tr>
                             <td class="mono"><?php echo htmlspecialchars((string)$ar['sale_invoice_number'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$ar['allocated_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo $pvF($ar['allocated_amount'], $pvCur); ?></td>
                             <td><?php echo htmlspecialchars((string)$ar['status'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$ar['created_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$ar['created_by'], ENT_QUOTES, 'UTF-8'); ?></td>
@@ -254,6 +269,6 @@ mysqli_close($conn);
             <?php endif; ?>
         </section>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

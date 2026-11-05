@@ -22,6 +22,7 @@
  * Timezone: Africa/Harare (Zimbabwe local) — not silent UTC.
  */
 
+require_once __DIR__ . '/fx_report.php';
 require_once __DIR__ . '/till_session.php';
 require_once __DIR__ . '/cash_movement.php';
 require_once __DIR__ . '/cash_reconciliation.php';
@@ -328,41 +329,85 @@ function psCashReportingBatchBalances(mysqli $conn, array $sessionIds): array
         return $out;
     }
     $idList = implode(',', array_map('intval', array_values($ids)));
-    $sql = "SELECT till_session_id,
+    // 2026-10-21: one drawer per currency. 'balance' / 'detail' = the base drawer (as the till's own ledger,
+    // psCashMovementBalance); 'drawers' = every currency with its balance and base equivalent at the stored rates.
+    require_once __DIR__ . '/fx_report.php';
+    $hasCur = psFxHasColumn($conn, 'cash_movements', 'currency');
+    $curSel = $hasCur ? 'currency' : 'NULL';
+    $baseSel = $hasCur && psFxHasColumn($conn, 'cash_movements', 'base_amount') ? 'base_amount' : 'NULL';
+    $sql = "SELECT till_session_id, $curSel AS cur,
                 COALESCE(SUM(CASE WHEN movement_type = 'OPENING_FLOAT' THEN amount ELSE 0 END), 0) AS opening_float,
                 COALESCE(SUM(CASE WHEN movement_type = 'CASH_SALE' THEN amount ELSE 0 END), 0) AS cash_sales,
                 COALESCE(SUM(CASE WHEN movement_type = 'CASH_IN' THEN amount ELSE 0 END), 0) AS cash_in,
                 COALESCE(SUM(CASE WHEN movement_type = 'CASH_REFUND' THEN amount ELSE 0 END), 0) AS cash_refunds,
-                COALESCE(SUM(CASE WHEN movement_type = 'CASH_OUT' THEN amount ELSE 0 END), 0) AS cash_out
+                COALESCE(SUM(CASE WHEN movement_type = 'CASH_OUT' THEN amount ELSE 0 END), 0) AS cash_out,
+                SUM(CASE WHEN movement_type IN ('CASH_REFUND','CASH_OUT') THEN -$baseSel ELSE $baseSel END) AS base_signed,
+                SUM($baseSel IS NULL) AS base_missing
             FROM cash_movements
             WHERE till_session_id IN ($idList)
-            GROUP BY till_session_id";
+            GROUP BY till_session_id, $curSel";
     $res = mysqli_query($conn, $sql);
     $found = [];
     if ($res) {
         while ($row = mysqli_fetch_assoc($res)) {
             $sid = (int)$row['till_session_id'];
-            // Same formula as psCashMovementBalance — via psCashMovementComputeBalanceFromParts.
+            $tillBase = psFxTillBase($conn, $sid);
+            $code = psFxNormalizeCode($row['cur'] ?? '') ?: $tillBase;
             $computed = psCashMovementComputeBalanceFromParts($row);
+            $baseEq = ($code === $tillBase) ? $computed['balance']
+                : ((int)$row['base_missing'] === 0 ? number_format((float)$row['base_signed'], 2, '.', '') : null);
+            $drawer = ['currency' => $code, 'legacy' => ($row['cur'] ?? null) === null, 'balance' => $computed['balance'],
+                'detail' => $computed['detail'], 'base_balance' => $baseEq];
+            if (!isset($out[$sid])) {
+                $empty = psCashMovementComputeBalanceFromParts([]);
+                $out[$sid] = ['ok' => true, 'balance' => $empty['balance'], 'detail' => $empty['detail'], 'drawers' => [], 'base' => $tillBase];
+            }
+            if (isset($out[$sid]['drawers'][$code])) {
+                // Legacy (NULL) rows and base rows are the same drawer: add the parts together.
+                $prev = $out[$sid]['drawers'][$code];
+                $merged = [];
+                foreach (['opening_float', 'cash_sales', 'cash_in', 'cash_refunds', 'cash_out'] as $k) {
+                    $merged[$k] = (float)$prev['detail'][$k] + (float)$drawer['detail'][$k];
+                }
+                $c2 = psCashMovementComputeBalanceFromParts($merged);
+                $drawer = ['currency' => $code, 'legacy' => $prev['legacy'] || $drawer['legacy'], 'balance' => $c2['balance'], 'detail' => $c2['detail'], 'base_balance' => $c2['balance']];
+            }
+            $out[$sid]['drawers'][$code] = $drawer;
+            if ($code === $tillBase) {
+                $out[$sid]['balance'] = $drawer['balance'];
+                $out[$sid]['detail'] = $drawer['detail'];
+            }
             $found[$sid] = true;
-            $out[$sid] = [
-                'ok' => true,
-                'balance' => $computed['balance'],
-                'detail' => $computed['detail'],
-            ];
         }
     }
     foreach ($ids as $sid) {
+        $tillBase = psFxTillBase($conn, $sid);
+        $empty = psCashMovementComputeBalanceFromParts([]);
         if (empty($found[$sid])) {
-            $empty = psCashMovementComputeBalanceFromParts([]);
-            $out[$sid] = [
-                'ok' => true,
-                'balance' => $empty['balance'],
-                'detail' => $empty['detail'],
-            ];
+            $out[$sid] = ['ok' => true, 'balance' => $empty['balance'], 'detail' => $empty['detail'], 'drawers' => [], 'base' => $tillBase];
+        }
+        // The base drawer always exists (as in the till's own ledger), base first.
+        if (!isset($out[$sid]['drawers'][$tillBase])) {
+            $out[$sid]['drawers'] = [$tillBase => ['currency' => $tillBase, 'legacy' => false, 'balance' => $empty['balance'], 'detail' => $empty['detail'], 'base_balance' => $empty['balance']]]
+                + $out[$sid]['drawers'];
+        } else {
+            $out[$sid]['drawers'] = [$tillBase => $out[$sid]['drawers'][$tillBase]] + $out[$sid]['drawers'];
         }
     }
     return $out;
+}
+
+/** Mix of a till's drawers (each currency's expected cash; base equivalent from the movements' stored amounts). */
+function psCashReportingDrawersMix(array $ctx, array $drawers): array
+{
+    $mix = [];
+    foreach ($drawers as $d) {
+        if ((float)$d['balance'] == 0.0 && array_sum(array_map('floatval', $d['detail'] ?? [])) == 0.0) {
+            continue; // an untouched drawer adds nothing
+        }
+        psFxrAdd($mix, $ctx, $d['currency'], $d['balance'], $d['base_balance']);
+    }
+    return $mix;
 }
 
 /**
@@ -392,7 +437,10 @@ function psCashReportingBatchLatestRecons(mysqli $conn, array $sessionIds): arra
             INNER JOIN (
                 SELECT till_session_id, MAX(id) AS max_id
                 FROM cash_reconciliations
-                WHERE till_session_id IN ($idList) AND lifecycle = '" . mysqli_real_escape_string($conn, $lifecycle) . "'
+                WHERE till_session_id IN ($idList) AND lifecycle = '" . mysqli_real_escape_string($conn, $lifecycle) . "'"
+        // Multi-currency: classification compares with the base drawer, so take the base drawer's latest count.
+        . (psFxHasColumn($conn, 'cash_reconciliations', 'currency')
+            ? " AND (currency IS NULL OR currency = '" . mysqli_real_escape_string($conn, psFxBase($conn, psFxSessionCompany())) . "')" : '') . "
                 GROUP BY till_session_id
             ) t ON t.max_id = cr.id";
     $res = mysqli_query($conn, $sql);
@@ -483,6 +531,8 @@ function psCashReportingNormaliseFilters(mysqli $conn, array $raw): array
             'session_status' => $sessionStatus,
             'page' => $page,
             'page_size' => $pageSize,
+            // 2026-10-21: currency view / filter (fx_view, fx_cur).
+            'fx' => psFxrContext($conn, $raw),
         ],
     ];
 }
@@ -517,6 +567,9 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['register_id'] > 0) {
         $where[] = 's.register_id = ?';
@@ -569,6 +622,7 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
     $openRows = [];
     $staleWarnings = [];
     $expectedOpenTotal = '0.00';
+    $expectedOpenMix = [];
     $statusFilter = $f['status'];
 
     foreach ($openSessions as $session) {
@@ -603,6 +657,8 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
             'display_status' => $cls['display_status'],
             'recon_id' => $recon ? (int)$recon['id'] : null,
             'recon_at' => $recon ? (string)($recon['reconciled_at'] ?? '') : null,
+            'drawers' => $bal['drawers'] ?? [],
+            'fx_expected' => psCashReportingDrawersMix($f['fx'] ?? psFxrContext($conn, []), $bal['drawers'] ?? []),
         ];
 
         if ($statusFilter !== '') {
@@ -629,6 +685,7 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
 
         $openRows[] = $row;
         $expectedOpenTotal = psCashReportingMoneyAdd($expectedOpenTotal, (string)$row['expected_cash']);
+        psFxrMerge($expectedOpenMix, $row['fx_expected']);
 
         if ($row['stale']) {
             $diff = psCashReportingMoneySub((string)$row['expected_cash'], (string)$row['latest_recon_expected']);
@@ -655,6 +712,9 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
         $cw[] = 's.branch = ?';
         $ct .= 's';
         $cp[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $cw[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['from_dt'] !== null) {
         $cw[] = 's.closed_at >= ?';
@@ -702,6 +762,14 @@ function psCashReportingDashboard(mysqli $conn, array $rawFilters = []): array
         'surpluses_count' => (int)($varTotals['surplus_count'] ?? 0),
         'surpluses_amount' => (string)($varTotals['surplus_amount'] ?? '0.00'),
         'branch' => $f['all_branches'] ? 'All branches' : $f['branch'],
+        // Per-currency mixes (2026-10-21): expected cash in every drawer; movement types; count variances (native).
+        'fx_expected' => $expectedOpenMix,
+        'fx_cash_sales' => $movSummary['by_type'][PS_CASH_MOV_CASH_SALE]['fx'] ?? [],
+        'fx_cash_in' => $movSummary['by_type'][PS_CASH_MOV_CASH_IN]['fx'] ?? [],
+        'fx_cash_out' => $movSummary['by_type'][PS_CASH_MOV_CASH_OUT]['fx'] ?? [],
+        'fx_cash_refunds' => $movSummary['by_type'][PS_CASH_MOV_CASH_REFUND]['fx'] ?? [],
+        'fx_shortages' => $varTotals['fx_shortage'] ?? [],
+        'fx_surpluses' => $varTotals['fx_surplus'] ?? [],
     ];
 
     $recentRecons = psCashReportingRecentReconciliations($conn, $f, 15);
@@ -744,6 +812,9 @@ function psCashReportingMovementTypeTotals(mysqli $conn, array $f): array
         $where[] = 'cm.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'cm.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'cm.movement_at >= ?';
@@ -781,59 +852,37 @@ function psCashReportingMovementTypeTotals(mysqli $conn, array $f): array
         $params[] = $f['session_status'];
     }
 
-    $sql = 'SELECT cm.movement_type, COUNT(*) AS cnt, COALESCE(SUM(cm.amount), 0) AS amt
-            FROM cash_movements cm
-            WHERE ' . implode(' AND ', $where) . '
-            GROUP BY cm.movement_type';
-    $stmt = mysqli_prepare($conn, $sql);
+    // 2026-10-21: per currency. 'amount' = consolidated base (each movement's stored base amount); 'fx' = per-currency mix.
+    require_once __DIR__ . '/fx_report.php';
+    $ctx = $f['fx'] ?? psFxrContext($conn, []);
+    $where[] = '1=1' . psFxrCurFilterSql($conn, $ctx, 'cm.currency');
+    $agg = psFxrAggSelectSql($conn, $ctx, 'cm.currency', 'cm.amount', 'cm.base_amount', 'cm.fx_rate');
     $byType = $emptyTypes;
     $totalCount = 0;
-    if ($stmt) {
-        if ($types !== '') {
-            mysqli_stmt_bind_param($stmt, $types, ...$params);
-        }
-        mysqli_stmt_execute($stmt);
-        $res = mysqli_stmt_get_result($stmt);
-        if ($res) {
-            while ($row = mysqli_fetch_assoc($res)) {
-                $mt = (string)$row['movement_type'];
-                $cnt = (int)$row['cnt'];
-                $amt = number_format((float)$row['amt'], 2, '.', '');
-                $byType[$mt] = ['count' => $cnt, 'amount' => $amt];
-                $totalCount += $cnt;
-            }
-        }
-        mysqli_stmt_close($stmt);
+    $g = psFxrGrouped($conn, $ctx, 'SELECT cm.movement_type AS k0, ' . $agg . ' FROM cash_movements cm WHERE ' . implode(' AND ', $where) . ' GROUP BY cm.movement_type, cm.currency', $types, $params, 1, [], [], false);
+    foreach ($g['groups'] ?? [] as $grp) {
+        $mt = (string)$grp['keys'][0];
+        $byType[$mt] = ['count' => (int)$grp['n'], 'amount' => psFxrMoney(psFxrBase($grp['mix'])), 'fx' => $grp['mix']];
+        $totalCount += (int)$grp['n'];
     }
 
     // Reason breakdown for CASH_IN / CASH_OUT (operational labels).
     $reasonBreakdown = ['CASH_IN' => [], 'CASH_OUT' => []];
-    $rsql = 'SELECT cm.movement_type, cm.reason, COUNT(*) AS cnt, COALESCE(SUM(cm.amount), 0) AS amt
-             FROM cash_movements cm
-             WHERE ' . implode(' AND ', $where) . "
+    $rg = psFxrGrouped($conn, $ctx, 'SELECT cm.movement_type AS k0, cm.reason AS k1, ' . $agg . ' FROM cash_movements cm WHERE ' . implode(' AND ', $where) . "
                AND cm.movement_type IN ('CASH_IN','CASH_OUT')
-             GROUP BY cm.movement_type, cm.reason
-             ORDER BY cm.movement_type, cm.reason";
-    $rstmt = mysqli_prepare($conn, $rsql);
-    if ($rstmt) {
-        if ($types !== '') {
-            mysqli_stmt_bind_param($rstmt, $types, ...$params);
-        }
-        mysqli_stmt_execute($rstmt);
-        $rres = mysqli_stmt_get_result($rstmt);
-        if ($rres) {
-            while ($row = mysqli_fetch_assoc($rres)) {
-                $mt = (string)$row['movement_type'];
-                $reason = trim((string)($row['reason'] ?? ''));
-                $reasonBreakdown[$mt][] = [
-                    'reason' => $reason,
-                    'reason_label' => $reason !== '' ? psCashMovementReasonLabel($reason) : '(none)',
-                    'count' => (int)$row['cnt'],
-                    'amount' => number_format((float)$row['amt'], 2, '.', ''),
-                ];
-            }
-        }
-        mysqli_stmt_close($rstmt);
+             GROUP BY cm.movement_type, cm.reason, cm.currency", $types, $params, 2, [], [], false);
+    $rgroups = $rg['groups'] ?? [];
+    usort($rgroups, fn($x, $y) => strcmp((string)$x['keys'][0] . "\x1f" . (string)$x['keys'][1], (string)$y['keys'][0] . "\x1f" . (string)$y['keys'][1]));
+    foreach ($rgroups as $grp) {
+        $mt = (string)$grp['keys'][0];
+        $reason = trim((string)($grp['keys'][1] ?? ''));
+        $reasonBreakdown[$mt][] = [
+            'reason' => $reason,
+            'reason_label' => $reason !== '' ? psCashMovementReasonLabel($reason) : '(none)',
+            'count' => (int)$grp['n'],
+            'amount' => psFxrMoney(psFxrBase($grp['mix'])),
+            'fx' => $grp['mix'],
+        ];
     }
 
     return [
@@ -869,6 +918,9 @@ function psCashReportingVarianceTotals(mysqli $conn, array $f): array
         $where[] = 'cr.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'cr.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'cr.reconciled_at >= ?';
@@ -896,36 +948,31 @@ function psCashReportingVarianceTotals(mysqli $conn, array $f): array
         $params[] = $f['register_id'];
     }
 
-    $sql = 'SELECT cr.status,
-                   COUNT(*) AS cnt,
-                   COALESCE(SUM(ABS(cr.variance)), 0) AS amt
-            FROM cash_reconciliations cr
-            WHERE ' . implode(' AND ', $where) . '
-            GROUP BY cr.status';
-    $stmt = mysqli_prepare($conn, $sql);
-    if ($stmt) {
-        if ($types !== '') {
-            mysqli_stmt_bind_param($stmt, $types, ...$params);
+    // 2026-10-21: counts are per drawer currency and store no exchange rate, so shortages / surpluses are totalled per
+    // currency only ('fx_*' mixes, shown in their own currency). '*_amount' = the base-currency drawers only.
+    require_once __DIR__ . '/fx_report.php';
+    $ctx = $f['fx'] ?? psFxrContext($conn, []);
+    $curCol = psFxHasColumn($conn, 'cash_reconciliations', 'currency') ? 'cr.currency' : 'NULL';
+    $where[] = '1=1' . ($curCol !== 'NULL' ? psFxrCurFilterSql($conn, $ctx, $curCol) : '');
+    $g = psFxrGrouped($conn, $ctx, 'SELECT cr.status AS k0, ' . psFxrAggSelectSql($conn, $ctx, $curCol, 'ABS(cr.variance)', null) . '
+            FROM cash_reconciliations cr WHERE ' . implode(' AND ', $where) . ' GROUP BY cr.status, ' . $curCol, $types, $params, 1, [], [], false);
+    $out['fx_shortage'] = [];
+    $out['fx_surplus'] = [];
+    foreach ($g['groups'] ?? [] as $grp) {
+        $st = strtoupper(trim((string)$grp['keys'][0]));
+        $cnt = (int)$grp['n'];
+        $amt = psFxrMoney(psFxrBase($grp['mix']));
+        if ($st === PS_CASH_RECON_STATUS_SHORTAGE) {
+            $out['shortage_count'] = $cnt;
+            $out['shortage_amount'] = $amt;
+            $out['fx_shortage'] = $grp['mix'];
+        } elseif ($st === PS_CASH_RECON_STATUS_SURPLUS) {
+            $out['surplus_count'] = $cnt;
+            $out['surplus_amount'] = $amt;
+            $out['fx_surplus'] = $grp['mix'];
+        } elseif ($st === PS_CASH_RECON_STATUS_BALANCED) {
+            $out['balanced_count'] = $cnt;
         }
-        mysqli_stmt_execute($stmt);
-        $res = mysqli_stmt_get_result($stmt);
-        if ($res) {
-            while ($row = mysqli_fetch_assoc($res)) {
-                $st = strtoupper(trim((string)$row['status']));
-                $cnt = (int)$row['cnt'];
-                $amt = number_format((float)$row['amt'], 2, '.', '');
-                if ($st === PS_CASH_RECON_STATUS_SHORTAGE) {
-                    $out['shortage_count'] = $cnt;
-                    $out['shortage_amount'] = $amt;
-                } elseif ($st === PS_CASH_RECON_STATUS_SURPLUS) {
-                    $out['surplus_count'] = $cnt;
-                    $out['surplus_amount'] = $amt;
-                } elseif ($st === PS_CASH_RECON_STATUS_BALANCED) {
-                    $out['balanced_count'] = $cnt;
-                }
-            }
-        }
-        mysqli_stmt_close($stmt);
     }
     return $out;
 }
@@ -944,6 +991,9 @@ function psCashReportingRecentReconciliations(mysqli $conn, array $f, int $limit
         $where[] = 'cr.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'cr.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'cr.reconciled_at >= ?';
@@ -956,7 +1006,7 @@ function psCashReportingRecentReconciliations(mysqli $conn, array $f, int $limit
         $params[] = $f['to_dt'];
     }
     $sql = 'SELECT cr.id, cr.till_session_id, cr.branch, cr.reconciled_at, cr.expected_cash,
-                   cr.counted_cash, cr.variance, cr.status, cr.reconciled_by, cr.notes,
+                   cr.counted_cash, cr.variance, cr.status, cr.reconciled_by, cr.notes' . psCashReconciliationCurrencySelect($conn) . ',
                    s.cashier_email, s.status AS session_status, r.name AS register_name
             FROM cash_reconciliations cr
             LEFT JOIN sessions s ON s.id = cr.till_session_id
@@ -997,6 +1047,9 @@ function psCashReportingRecentClosures(mysqli $conn, array $f, int $limit = 15):
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 's.closed_at >= ?';
@@ -1062,6 +1115,9 @@ function psCashReportingMovementsReport(mysqli $conn, array $rawFilters = []): a
         $where[] = 'cm.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'cm.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'cm.movement_at >= ?';
@@ -1105,6 +1161,7 @@ function psCashReportingMovementsReport(mysqli $conn, array $rawFilters = []): a
         $types .= 's';
         $params[] = $f['session_status'];
     }
+    $where[] = '1=1' . psFxrCurFilterSql($conn, $f['fx'], 'cm.currency');
 
     $whereSql = implode(' AND ', $where);
     $countSql = "SELECT COUNT(*) AS c
@@ -1133,6 +1190,7 @@ function psCashReportingMovementsReport(mysqli $conn, array $rawFilters = []): a
     $offset = ($page - 1) * $pageSize;
 
     $listSql = "SELECT cm.id, cm.till_session_id, cm.branch, cm.movement_at, cm.movement_type, cm.amount,
+                       cm.currency AS fx_currency, cm.base_amount, cm.fx_rate, cm.fx_rate_ids,
                        cm.reference_type, cm.reference_id, cm.reason, cm.description, cm.created_by, cm.created_at,
                        s.status AS session_status, s.cashier_email, r.name AS register_name
                 FROM cash_movements cm
@@ -1202,6 +1260,9 @@ function psCashReportingReconciliationReport(mysqli $conn, array $rawFilters = [
         $where[] = 'cr.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'cr.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'cr.reconciled_at >= ?';
@@ -1238,6 +1299,9 @@ function psCashReportingReconciliationReport(mysqli $conn, array $rawFilters = [
         $types .= 's';
         $params[] = $f['session_status'];
     }
+    if (psFxHasColumn($conn, 'cash_reconciliations', 'currency')) {
+        $where[] = '1=1' . psFxrCurFilterSql($conn, $f['fx'], 'cr.currency');
+    }
 
     $whereSql = implode(' AND ', $where);
     $countSql = "SELECT COUNT(*) AS c
@@ -1266,7 +1330,7 @@ function psCashReportingReconciliationReport(mysqli $conn, array $rawFilters = [
     $offset = ($page - 1) * $pageSize;
 
     $listSql = "SELECT cr.id, cr.till_session_id, cr.branch, cr.reconciled_at, cr.expected_cash,
-                       cr.counted_cash, cr.variance, cr.status, cr.lifecycle, cr.notes, cr.reconciled_by,
+                       cr.counted_cash, cr.variance, cr.status, cr.lifecycle, cr.notes, cr.reconciled_by" . psCashReconciliationCurrencySelect($conn) . ",
                        s.status AS session_status, s.cashier_email, r.name AS register_name
                 FROM cash_reconciliations cr
                 LEFT JOIN sessions s ON s.id = cr.till_session_id
@@ -1332,6 +1396,9 @@ function psCashReportingClosureReport(mysqli $conn, array $rawFilters = []): arr
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 's.closed_at >= ?';
@@ -1416,6 +1483,8 @@ function psCashReportingClosureReport(mysqli $conn, array $rawFilters = []): arr
         }
     }
     mysqli_stmt_close($lstmt);
+    // Multi-currency: the session's closing figures are the base drawer; add each other drawer's final count.
+    $rows = psCashReportingAttachCurrencyCounts($conn, $rows);
 
     return [
         'ok' => true,
@@ -1467,6 +1536,9 @@ function psCashReportingCashierSummary(mysqli $conn, array $rawFilters = []): ar
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'COALESCE(s.opened_at, s.created_at) >= ?';
@@ -1527,12 +1599,18 @@ function psCashReportingCashierSummary(mysqli $conn, array $rawFilters = []): ar
             'cash_refunds' => (string)($mov['by_type'][PS_CASH_MOV_CASH_REFUND]['amount'] ?? '0.00'),
             'cash_in' => (string)($mov['by_type'][PS_CASH_MOV_CASH_IN]['amount'] ?? '0.00'),
             'cash_out' => (string)($mov['by_type'][PS_CASH_MOV_CASH_OUT]['amount'] ?? '0.00'),
+            'fx_cash_sales' => $mov['by_type'][PS_CASH_MOV_CASH_SALE]['fx'] ?? [],
+            'fx_cash_refunds' => $mov['by_type'][PS_CASH_MOV_CASH_REFUND]['fx'] ?? [],
+            'fx_cash_in' => $mov['by_type'][PS_CASH_MOV_CASH_IN]['fx'] ?? [],
+            'fx_cash_out' => $mov['by_type'][PS_CASH_MOV_CASH_OUT]['fx'] ?? [],
             'recon_count' => (int)$var['shortage_count'] + (int)$var['surplus_count'] + (int)$var['balanced_count'],
             'balanced_count' => (int)$var['balanced_count'],
             'shortage_count' => (int)$var['shortage_count'],
             'surplus_count' => (int)$var['surplus_count'],
             'shortage_amount' => (string)$var['shortage_amount'],
+            'fx_shortage' => $var['fx_shortage'] ?? [],
             'surplus_amount' => (string)$var['surplus_amount'],
+            'fx_surplus' => $var['fx_surplus'] ?? [],
         ];
     }
 
@@ -1565,6 +1643,9 @@ function psCashReportingTillSummary(mysqli $conn, array $rawFilters = []): array
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 's.branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'COALESCE(s.opened_at, s.created_at) >= ?';
@@ -1627,10 +1708,16 @@ function psCashReportingTillSummary(mysqli $conn, array $rawFilters = []): array
             'cash_refunds' => (string)($mov['by_type'][PS_CASH_MOV_CASH_REFUND]['amount'] ?? '0.00'),
             'cash_in' => (string)($mov['by_type'][PS_CASH_MOV_CASH_IN]['amount'] ?? '0.00'),
             'cash_out' => (string)($mov['by_type'][PS_CASH_MOV_CASH_OUT]['amount'] ?? '0.00'),
+            'fx_cash_sales' => $mov['by_type'][PS_CASH_MOV_CASH_SALE]['fx'] ?? [],
+            'fx_cash_refunds' => $mov['by_type'][PS_CASH_MOV_CASH_REFUND]['fx'] ?? [],
+            'fx_cash_in' => $mov['by_type'][PS_CASH_MOV_CASH_IN]['fx'] ?? [],
+            'fx_cash_out' => $mov['by_type'][PS_CASH_MOV_CASH_OUT]['fx'] ?? [],
             'shortage_count' => (int)$var['shortage_count'],
             'surplus_count' => (int)$var['surplus_count'],
             'shortage_amount' => (string)$var['shortage_amount'],
+            'fx_shortage' => $var['fx_shortage'] ?? [],
             'surplus_amount' => (string)$var['surplus_amount'],
+            'fx_surplus' => $var['fx_surplus'] ?? [],
             'balanced_count' => (int)$var['balanced_count'],
         ];
     }
@@ -1724,10 +1811,16 @@ function psCashReportingBranchSummary(mysqli $conn, array $rawFilters = []): arr
             'cash_refunds' => (string)($mov['by_type'][PS_CASH_MOV_CASH_REFUND]['amount'] ?? '0.00'),
             'cash_in' => (string)($mov['by_type'][PS_CASH_MOV_CASH_IN]['amount'] ?? '0.00'),
             'cash_out' => (string)($mov['by_type'][PS_CASH_MOV_CASH_OUT]['amount'] ?? '0.00'),
+            'fx_cash_sales' => $mov['by_type'][PS_CASH_MOV_CASH_SALE]['fx'] ?? [],
+            'fx_cash_refunds' => $mov['by_type'][PS_CASH_MOV_CASH_REFUND]['fx'] ?? [],
+            'fx_cash_in' => $mov['by_type'][PS_CASH_MOV_CASH_IN]['fx'] ?? [],
+            'fx_cash_out' => $mov['by_type'][PS_CASH_MOV_CASH_OUT]['fx'] ?? [],
             'shortages_count' => (int)$var['shortage_count'],
             'shortages_amount' => (string)$var['shortage_amount'],
+            'fx_shortage' => $var['fx_shortage'] ?? [],
             'surpluses_count' => (int)$var['surplus_count'],
             'surpluses_amount' => (string)$var['surplus_amount'],
+            'fx_surplus' => $var['fx_surplus'] ?? [],
         ];
     }
 
@@ -1783,7 +1876,7 @@ function psCashReportingSessionDetail(mysqli $conn, int $tillSessionId): array
     $rst = mysqli_prepare(
         $conn,
         "SELECT id, till_session_id, branch, reconciled_at, expected_cash, counted_cash, variance,
-                status, lifecycle, notes, reconciled_by, created_at
+                status, lifecycle, notes, reconciled_by, created_at" . psCashReconciliationCurrencySelect($conn) . "
          FROM cash_reconciliations
          WHERE till_session_id = ?
          ORDER BY id DESC
@@ -1810,6 +1903,8 @@ function psCashReportingSessionDetail(mysqli $conn, int $tillSessionId): array
         'classification' => $cls,
         'expected_source' => $expectedSource,
         'live_ledger' => $live,
+        // Multi-currency: every drawer's ledger balance (base first).
+        'drawers' => psCashMovementBalancesByCurrency($conn, $tillSessionId),
         'movements' => $mov['rows'] ?? [],
         'reconciliations' => $reconRows,
         'audits' => $audits,
@@ -1945,6 +2040,9 @@ function psCashReportingAuditList(mysqli $conn, string $kind, array $rawFilters 
         $where[] = 'branch = ?';
         $types .= 's';
         $params[] = $f['branch'];
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $where[] = psCompanyBranchesInSql($conn, 'branch');
     }
     if ($f['from_dt'] !== null) {
         $where[] = 'changed_at >= ?';
@@ -2035,13 +2133,13 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
         if (empty($res['ok'])) {
             return ['ok' => false, 'error' => $res['error'] ?? 'Export failed.'];
         }
-        $headers = [
+        $ctx = $res['filters']['fx'];
+        $headers = array_merge([
             'Datetime', 'Branch', 'Till session', 'Register', 'User', 'Type', 'Direction',
-            'Amount', 'Reference', 'Reason', 'Description', 'Session status',
-        ];
+        ], psFxrCsvHeaders($ctx), ['Reference', 'Reason', 'Description', 'Session status']);
         $lines = [];
         foreach ($res['rows'] as $row) {
-            $lines[] = [
+            $lines[] = array_merge([
                 (string)($row['movement_at'] ?? ''),
                 (string)($row['branch'] ?? ''),
                 (string)($row['till_session_id'] ?? ''),
@@ -2049,12 +2147,12 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
                 (string)($row['created_by'] ?? ''),
                 (string)($row['movement_type'] ?? ''),
                 (string)($row['direction'] ?? ''),
-                (string)($row['amount'] ?? ''),
+            ], psFxrCsvValues($ctx, $row['fx_currency'] ?? null, $row['amount'] ?? '0', $row['base_amount'] ?? null, (string)($row['fx_rate'] ?? ''), (string)($row['fx_rate_ids'] ?? '')), [
                 (string)($row['reference_display'] ?? ''),
                 (string)($row['reason_label'] ?? $row['reason'] ?? ''),
                 (string)($row['description'] ?? ''),
                 (string)($row['session_status'] ?? ''),
-            ];
+            ]);
         }
         return ['ok' => true, 'filename' => 'cash_movements.csv', 'headers' => $headers, 'rows' => $lines];
     }
@@ -2065,7 +2163,7 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
             return ['ok' => false, 'error' => $res['error'] ?? 'Export failed.'];
         }
         $headers = [
-            'Session', 'Branch', 'Till', 'Cashier', 'Recon date', 'Expected', 'Counted',
+            'Session', 'Branch', 'Till', 'Cashier', 'Recon date', 'Drawer currency', 'Expected', 'Counted',
             'Variance', 'Status', 'Notes', 'By', 'Session status',
         ];
         $lines = [];
@@ -2076,6 +2174,7 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
                 (string)($row['register_name'] ?? ''),
                 (string)($row['cashier_email'] ?? ''),
                 (string)($row['reconciled_at'] ?? ''),
+                psFxNormalizeCode($row['currency'] ?? '') ?: ($res['filters']['fx']['base'] . ' (legacy, not recorded)'),
                 (string)($row['expected_cash'] ?? ''),
                 (string)($row['counted_cash'] ?? ''),
                 (string)($row['variance'] ?? ''),
@@ -2094,11 +2193,21 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
             return ['ok' => false, 'error' => $res['error'] ?? 'Export failed.'];
         }
         $headers = [
-            'Session', 'Branch', 'Till', 'Cashier', 'Opened', 'Closed', 'Float', 'Expected',
+            'Session', 'Branch', 'Till', 'Cashier', 'Opened', 'Closed', 'Drawer currency', 'Float', 'Expected',
             'Actual', 'Variance', 'Recon status', 'Final recon', 'Notes', 'Closed by',
         ];
         $lines = [];
+        $baseCode = $res['filters']['fx']['base'];
         foreach ($res['rows'] as $row) {
+            // Base drawer (session closing snapshot) first, then each other drawer's final count.
+            foreach ($row['currency_counts'] ?? [] as $code => $cc) {
+                $lines[] = [
+                    (string)($row['id'] ?? ''), (string)($row['branch'] ?? ''), (string)($row['register_name'] ?? ''),
+                    (string)($row['cashier_email'] ?? ''), (string)($row['opened_at'] ?? ''), (string)($row['closed_at'] ?? ''),
+                    (string)$code, '', (string)($cc['expected_cash'] ?? ''), (string)($cc['counted_cash'] ?? ''), (string)($cc['variance'] ?? ''),
+                    (string)($cc['status'] ?? ''), (string)($cc['id'] ?? ''), 'Final count of the ' . $code . ' drawer', (string)($row['closed_by'] ?? ''),
+                ];
+            }
             $lines[] = [
                 (string)($row['id'] ?? ''),
                 (string)($row['branch'] ?? ''),
@@ -2106,6 +2215,7 @@ function psCashReportingExportCsv(mysqli $conn, string $kind, array $rawFilters 
                 (string)($row['cashier_email'] ?? ''),
                 (string)($row['opened_at'] ?? ''),
                 (string)($row['closed_at'] ?? ''),
+                $baseCode,
                 (string)($row['opening_float'] ?? ''),
                 (string)($row['expected_cash'] ?? ''),
                 (string)($row['actual_cash'] ?? ''),
@@ -2161,6 +2271,9 @@ function psCashReportingRegisterOptions(mysqli $conn, array $f): array
         $sql .= ' AND branch = ?';
         $types = 's';
         $params[] = $f['branch'] ?? '';
+    } else {
+        require_once __DIR__ . '/product_master.php';
+        $sql .= ' AND ' . psCompanyBranchesInSql($conn, 'branch');
     }
     $sql .= ' ORDER BY branch ASC, name ASC LIMIT 200';
     $stmt = mysqli_prepare($conn, $sql);
@@ -2206,4 +2319,33 @@ function psCashReportingSendCsv(array $export): void
         fputcsv($out, $line);
     }
     fclose($out);
+}
+
+/**
+ * 2026-10-21: for closed sessions, the latest FINAL count of every non-base drawer (counted, expected, variance in
+ * that currency). Adds 'currency_counts' => [code => row] to each session row. Counts store no rate: per currency only.
+ */
+function psCashReportingAttachCurrencyCounts(mysqli $conn, array $rows): array
+{
+    if ($rows === [] || !psFxHasColumn($conn, 'cash_reconciliations', 'currency')) {
+        return $rows;
+    }
+    $ids = array_values(array_filter(array_map(fn($r) => (int)($r['id'] ?? 0), $rows)));
+    if ($ids === []) {
+        return $rows;
+    }
+    $base = mysqli_real_escape_string($conn, psFxBase($conn, psFxSessionCompany()));
+    $in = implode(',', $ids);
+    $res = mysqli_query($conn, "SELECT cr.* FROM cash_reconciliations cr
+        INNER JOIN (SELECT till_session_id, currency, MAX(id) AS mid FROM cash_reconciliations
+                    WHERE till_session_id IN ($in) AND lifecycle = 'FINAL' AND currency IS NOT NULL AND currency <> '$base'
+                    GROUP BY till_session_id, currency) t ON t.mid = cr.id");
+    $by = [];
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $by[(int)$r['till_session_id']][(string)$r['currency']] = $r;
+    }
+    foreach ($rows as $i => $r) {
+        $rows[$i]['currency_counts'] = $by[(int)($r['id'] ?? 0)] ?? [];
+    }
+    return $rows;
 }

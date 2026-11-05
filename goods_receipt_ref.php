@@ -39,7 +39,7 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -113,11 +113,15 @@ mysqli_close($conn);
                             <td><?php echo htmlspecialchars((string)($receipt['product'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)($receipt['reference1'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)($receipt['date_'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td><?php echo htmlspecialchars((string)($receipt['totalz'] ?? '') . ' ' . (string)($receipt['currency'] ?? $receipt['payment_mode'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $receipt['totalz'] ?? 0, psFxNormalizeCode($receipt['currency'] ?? '') ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?><?php if (($receipt['currency'] ?? null) === null): ?> <span class="fxa-tag" title="Recorded before currencies were stored">legacy</span><?php endif; ?></td>
                             <td><?php echo htmlspecialchars((string)($receipt['branch'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)($receipt['created_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td>
                                 <button type="button" onclick="window.location.href='goods_receipt.php?invoice_number=<?php echo urlencode((string)$receipt['reference1']); ?>'">View lines</button>
+                                <?php if (!empty($receipt['grv_number'])): ?>
+                                    <a class="ps-btn ps-btn-outline ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode((string)$receipt['grv_number']); ?>" target="_blank" rel="noopener">GRV PDF</a>
+                                    <a class="ps-btn ps-btn-ghost ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode((string)$receipt['grv_number']); ?>&amp;format=slip" target="_blank" rel="noopener">Slip</a>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -125,6 +129,6 @@ mysqli_close($conn);
             </tbody>
         </table>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

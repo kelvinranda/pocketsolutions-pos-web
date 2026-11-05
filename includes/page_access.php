@@ -42,6 +42,7 @@ if (!function_exists('psPageAccessEnforce')) {
             'ajax_pos_customer_search.php',
             'ajax_pos_customer_create.php',   // 2026-10-18: checks psSessionMayAddCustomer itself
             'ajax_pos_discard_cart.php',
+            'ajax_pos_ticket_review.php',     // 2026-10-24: read-only ticket priced on the server
             'fetch_pos_catalog.php',
             'submit_sale2.php',
             // 2026-10-17: quotations — all staff (price changes on a quote need Supervisor+, checked in the page).
@@ -56,6 +57,8 @@ if (!function_exists('psPageAccessEnforce')) {
             'all_receipts.php',
             'my_receipt.php',
             'receipt_print.php',
+            'receipt_reprint_authorise.php', // 2026-10-24: supervisor approval for a reprint (JSON)
+            'picking_slip_print.php',        // 2026-10-24: storeroom picking slip (own sales; copies need approval)
             'zimra_receipt_print.php',
             'cash_movement.php',
             'cash_reconciliation.php',
@@ -110,17 +113,15 @@ if (!function_exists('psPageAccessEnforce')) {
         ]);
     }
 
-    /** Pages allowed for a non-admin level (case-insensitive): Till | Supervisor | Management. */
+    /**
+     * Pages allowed for a non-admin level (case-insensitive): Till | Supervisor | Management.
+     * 2026-11-02: selling pages for everyone, plus what the company's admin allows that role (includes/role_permissions.php).
+     * The menus use the same list, so people only see what they may open.
+     */
     function psPageAccessPagesForLevel(string $level): array
     {
-        $level = strtolower(trim($level));
-        if ($level === 'management') {
-            return psPageAccessManagementPages();
-        }
-        if ($level === 'supervisor') {
-            return psPageAccessSupervisorPages();
-        }
-        return psPageAccessTillPages();
+        require_once __DIR__ . '/role_permissions.php';
+        return array_values(array_unique(array_merge(psPageAccessTillPages(), psRolePermPagesFor($level))));
     }
 
     /** Endpoints that answer AJAX with JSON (deny with JSON, not a redirect). */
@@ -130,7 +131,7 @@ if (!function_exists('psPageAccessEnforce')) {
         if ($page === 'ajax_pos.php') {
             return false;
         }
-        return (bool)preg_match('/^(ajax_|fetch_|submit_|suggest|session_status|open_session|close_session|set_branch)/', $page)
+        return (bool)preg_match('/^(ajax_|fetch_|submit_|suggest|session_status|open_session|close_session|set_branch|receipt_reprint_authorise)/', $page)
             || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower((string)$_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
             || (stripos((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json') !== false
                 && stripos((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'text/html') === false);
@@ -236,7 +237,7 @@ if (!function_exists('psPageAccessEnforce')) {
             return;
         }
         if (!in_array($page, psPageAccessPagesForLevel($level), true)) {
-            psPageAccessDeny($page, 403, 'This page is for administrators. Ask an admin if you need it.');
+            psPageAccessDeny($page, 403, 'Your role does not have access to this page. Your admin can allow it under Role Permissions.');
         }
     }
 }

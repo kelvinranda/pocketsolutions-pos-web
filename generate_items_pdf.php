@@ -117,5 +117,5 @@ $html .= '
 </body>
 </html>';
 
-$mpdf->WriteHTML($html);
+$mpdf->WriteHTML(function_exists('psBranchLabelHtml') ? psBranchLabelHtml($html) : $html); // 2026-11-02 shared branch names
 $mpdf->Output('items_list.pdf', 'I');

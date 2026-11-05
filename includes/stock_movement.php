@@ -1387,7 +1387,7 @@ function psSaveGoodsReceipt(mysqli $conn, array $receipt, bool $manageTransactio
         }
         // Supplier identity from PO only — never replace from POST free-text.
         $supplierId = (int)$poHeader['supplier_id'];
-        $supplierRow = psSupplierById($conn, $supplierId);
+        $supplierRow = psSupplierByIdForDocument($conn, $supplierId);
         if ($supplierRow === null) {
             return ['ok' => false, 'error' => 'The purchase order supplier was not found.'];
         }
@@ -3701,6 +3701,9 @@ function psSaveStockTake(mysqli $conn, array $input, bool $manageTransaction = t
     if (!stockMovementEnsureSchema($conn)) {
         return ['ok' => false, 'error' => 'The stock take could not be saved.'];
     }
+    // 2026-11-03: stock take records (tables are created here, before the transaction: CREATE TABLE would commit it).
+    require_once __DIR__ . '/stock_take_records.php';
+    $recordsReady = psStockTakeRecordsEnsureSchema($conn);
 
     $owns = $manageTransaction;
     if ($owns && !mysqli_begin_transaction($conn)) {
@@ -3740,6 +3743,7 @@ function psSaveStockTake(mysqli $conn, array $input, bool $manageTransaction = t
                 throw new RuntimeException('The stock take could not be saved.');
             }
             $systemMilli = (int)$ledger['milli'];
+            $recordSystemMilli = $systemMilli;
             $varianceMilli = $countedMilli - $systemMilli;
             if ($varianceMilli !== 0) {
                 $systemPlain = psStockQtyPlain((string)$ledger['balance']);
@@ -3776,6 +3780,7 @@ function psSaveStockTake(mysqli $conn, array $input, bool $manageTransaction = t
             if ($cacheMilli === null) {
                 throw new RuntimeException('The stock take could not be saved.');
             }
+            $recordSystemMilli = $cacheMilli;
             $varianceMilli = $countedMilli - $cacheMilli;
             $legacyGoods = psStockTakeLegacyGoods($conn, $productName, $productId, $branch);
             $legacyProductId = $productId;
@@ -3844,6 +3849,20 @@ function psSaveStockTake(mysqli $conn, array $input, bool $manageTransaction = t
         $updated = mysqli_stmt_execute($update);
         mysqli_stmt_close($update);
         if (!$updated) {
+            throw new RuntimeException('The stock take could not be saved.');
+        }
+
+        // 2026-11-03: keep the count (also when it matched) for the Stock Take Records page.
+        if ($recordsReady && !psStockTakeRecordsSaveLine($conn,
+            trim((string)($_SESSION['the_company'] ?? '')), $branch, trim((string)($_SESSION['logger'] ?? '')), 'WEB', [
+                'product_id' => $productId,
+                'product' => $productName,
+                'system_qty' => psMilliToStock($recordSystemMilli),
+                'counted_qty' => psMilliToStock($countedMilli),
+                'variance' => psMilliToStock($varianceMilli),
+                'controlled' => $controlled,
+                'movement_id' => $movementId ?: null,
+            ])) {
             throw new RuntimeException('The stock take could not be saved.');
         }
 
@@ -4016,8 +4035,13 @@ function psStockStartTrackingBranch(mysqli $conn, string $branch, string $compan
  * 2026-10-14: a newly created product starts tracked at 0 on its branch.
  * Call inside the creating transaction, right after the goods row is inserted.
  */
-function psStockOpenNewProduct(mysqli $conn, string $productId, string $branch, ?int $userId, string $email): bool
+function psStockOpenNewProduct(mysqli $conn, string $productId, string $branch, ?int $userId, string $email, string $quantity = '0'): bool
 {
+    // 2026-11-02: an opening quantity can come with the new product (item import "Opening Stock" column).
+    $quantity = psStockDecimal($quantity) ?? '0';
+    if (psStockDecimalCmp($quantity, '0') < 0) {
+        return false;
+    }
     mysqli_report(MYSQLI_REPORT_OFF);
     $productId = trim($productId);
     $branch = trim($branch);
@@ -4031,13 +4055,15 @@ function psStockOpenNewProduct(mysqli $conn, string $productId, string $branch, 
         'product_id' => $productId,
         'branch' => $branch,
         'movement_type' => 'OPENING_BALANCE',
-        'quantity' => '0',
+        'quantity' => $quantity,
         'reference_type' => 'NEW_PRODUCT',
         'reference_id' => psOpeningReferenceId(),
         'movement_at' => date('Y-m-d H:i:s'),
         'user_id' => $userId,
         'user_email' => $email,
-        'notes' => 'New product: stock is tracked from creation. Receive stock with a goods receipt.',
+        'notes' => psStockDecimalCmp($quantity, '0') > 0
+            ? 'New product with opening stock ' . psStockQtyPlain($quantity) . ' (item import).'
+            : 'New product: stock is tracked from creation. Receive stock with a goods receipt.',
     ]);
     return !empty($rec['ok']);
 }

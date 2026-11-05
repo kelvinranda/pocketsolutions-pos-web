@@ -26,7 +26,7 @@ $scope = psBranchReportScope($conn);
 $error = empty($scope['ok']) ? (string)($scope['error'] ?? 'That branch is not available.') : '';
 $rows = $error === '' ? psQuoteList($conn, $company, $scope['branches'], $q, $status) : [];
 $notice = trim((string)($_GET['notice'] ?? ''));
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -71,7 +71,7 @@ mysqli_close($conn);
                     <td><?php echo $h($r['branch']); ?></td>
                     <td><?php echo $h($r['valid_until']); ?></td>
                     <td><?php echo $h(psQuoteStatusLabel($r)); ?><?php if ($r['converted_invoice']): ?><div class="ps-muted">Invoice <?php echo $h($r['converted_invoice']); ?></div><?php endif; ?></td>
-                    <td style="text-align:right"><?php echo $h(ps_money($r['total'])); ?></td>
+                    <td style="text-align:right"><?php echo $h(psFxFormat($conn, $r['total'], psFxNormalizeCode($r['currency'] ?? '') ?: psFxBase($conn, psFxSessionCompany()))); ?></td>
                     <td><?php echo $h($r['created_by']); ?></td>
                 </tr>
             <?php endforeach; ?>
@@ -79,6 +79,6 @@ mysqli_close($conn);
         </table>
         </div>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

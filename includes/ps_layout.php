@@ -249,10 +249,12 @@ if (!function_exists('ps_session')) {
             ['items_list.php', 'Items', 'box', 'Products & Stock'],
             ['import_items.php', 'Import Items', 'box', 'Products & Stock'],
             ['product_categories.php', 'Categories & Groups', 'grid', 'Products & Stock'],
+            ['product_packs.php', 'Packs & Units', 'box', 'Products & Stock'],
             ['bulk_prices.php', 'Bulk Price Change', 'chart', 'Products & Stock'],
             ['barcode_labels.php', 'Barcode Labels', 'pin', 'Products & Stock'],
             ['run_stocklist.php', 'Stock List', 'chart', 'Products & Stock'],
             ['stock_take_sheet.php', 'Stock Take', 'pin', 'Products & Stock'],
+            ['stock_take_records.php', 'Stock Take Records', 'chart', 'Products & Stock'], // 2026-11-03
             ['inventory_control.php', 'Inventory Control', 'box', 'Products & Stock'],
             ['opening_stock.php', 'Opening Stock', 'box', 'Products & Stock'],
             ['stock_adjustment.php', 'Stock Adjustment', 'box', 'Products & Stock'],
@@ -269,6 +271,7 @@ if (!function_exists('ps_session')) {
             ['purchasing_reports.php', 'Purchasing Reports', 'chart', 'Purchasing'],
 
             ['customers_list.php', 'Customers', 'users', 'Customers & Accounts'],
+            ['loyalty_settings.php', 'Loyalty Programme', 'grid', 'Customers & Accounts'],
             ['customer_accounts_list.php', 'Customer Accounts', 'receipt', 'Customers & Accounts'],
             ['customer_account_payments.php', 'Account Payments', 'receipt', 'Customers & Accounts'],
             ['customer_receivables_ageing.php', 'Receivables Ageing', 'chart', 'Customers & Accounts'],
@@ -295,9 +298,9 @@ if (!function_exists('ps_session')) {
 
             ['admin_dashboard.php', 'Admin Home', 'grid', 'Admin'],
             ['users.php', 'Users', 'users', 'Admin'],
+            ['role_permissions.php', 'Role Permissions', 'users', 'Admin'], // 2026-11-02
             ['backup_admin.php', 'Backup & Recovery', 'box', 'Admin'],
             ['security_audit_history.php', 'Security Audit', 'receipt', 'Admin'],
-            ['branch_integrity_report.php', 'Branch Integrity', 'chart', 'Admin'],
             ['zimra_setup.php', 'ZIMRA Device Setup', 'grid', 'Admin'],
             ['settings.php', 'System Reset', 'grid', 'Admin'],
         ];
@@ -312,6 +315,7 @@ if (!function_exists('ps_session')) {
             ['platform_zimra_devices.php', 'ZIMRA Devices', 'receipt', 'Platform'],
             ['platform_desktop_releases.php', 'Desktop Releases', 'box', 'Platform'],
             ['platform_activity.php', 'Platform Activity', 'receipt', 'Platform'],
+            ['branch_integrity_report.php', 'Branch Integrity', 'chart', 'Platform'], // 2026-11-02: covers every company
         ];
         if (function_exists('psPlatformSessionIsSuperAdmin') && psPlatformSessionIsSuperAdmin()) {
             if (!psPlatformIsActing()) {
@@ -461,15 +465,32 @@ if (!function_exists('ps_session')) {
         echo '<div class="ps-brand-copy"><div class="ps-brand-name">' . ps_h($company) . '</div>';
         echo '<div class="ps-brand-sub">' . ($psSuper && !$psAct ? 'Platform console' : 'Point of sale') . '</div></div></div>';
         echo '<nav class="ps-nav">';
-        $lastGroup = null;
+        // 2026-11-03: each section is a dropdown; the section of the open page starts open (ps-theme.js remembers the rest).
+        $sections = [];
         foreach (ps_nav_items() as $item) {
-            $group = (string)($item[3] ?? '');
-            if ($group !== '' && $group !== $lastGroup) {
-                echo '<div class="ps-nav-group">' . ps_h($group) . '</div>';
-                $lastGroup = $group;
+            $sections[(string)($item[3] ?? '')][] = $item;
+        }
+        $chev = '<svg class="ps-nav-chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+        $secNo = 0;
+        foreach ($sections as $group => $items) {
+            $links = '';
+            $hasCurrent = false;
+            foreach ($items as $item) {
+                $active = $current === $item[0] ? ' is-on' : '';
+                $hasCurrent = $hasCurrent || $active !== '';
+                $links .= '<a class="' . trim($active) . '" href="' . ps_h($item[0]) . '">' . ps_icon($item[2]) . '<span>' . ps_h($item[1]) . '</span></a>';
             }
-            $active = $current === $item[0] ? ' is-on' : '';
-            echo '<a class="' . trim($active) . '" href="' . ps_h($item[0]) . '">' . ps_icon($item[2]) . '<span>' . ps_h($item[1]) . '</span></a>';
+            if ($group === '') {
+                echo $links;
+                continue;
+            }
+            $secNo++;
+            $id = 'ps-nav-sec-' . $secNo;
+            echo '<div class="ps-nav-sec' . ($hasCurrent ? ' is-open' : '') . '" data-ps-sec="' . ps_h($group) . '"' . ($hasCurrent ? ' data-ps-current="1"' : '') . '>';
+            echo '<button type="button" class="ps-nav-group" data-ps-sec-toggle aria-expanded="' . ($hasCurrent ? 'true' : 'false') . '" aria-controls="' . $id . '">'
+                . '<span>' . ps_h($group) . '</span>' . $chev . '</button>';
+            echo '<div class="ps-nav-items" id="' . $id . '">' . $links . '</div>';
+            echo '</div>';
         }
         echo '</nav>';
         echo '<div class="ps-side-foot">';
@@ -545,7 +566,8 @@ if (!function_exists('ps_session')) {
 
     function ps_scripts() {
         ps_logout_confirm_modal();
-        echo '<script src="assets/ps-theme.js"></script>';
+        $themeJs = dirname(__DIR__) . '/assets/ps-theme.js';
+        echo '<script src="assets/ps-theme.js?v=' . rawurlencode(is_file($themeJs) ? (string)filemtime($themeJs) : '1') . '"></script>';
         echo '<script>(function(){function t(){var m=document.querySelector(\'meta[name="csrf-token"]\');return m?m.getAttribute("content"):"";}window.psCsrfToken=t;if(window.jQuery){jQuery.ajaxSetup({beforeSend:function(xhr,settings){var tok=t();if(!tok)return;xhr.setRequestHeader("X-CSRF-Token",tok);if(settings.data&&typeof settings.data==="string"&&settings.data.indexOf("csrf_token=")<0){settings.data+=(settings.data.length?"&":"")+"csrf_token="+encodeURIComponent(tok);}else if(settings.data&&typeof settings.data==="object"&&!(settings.data instanceof FormData)&&settings.data.csrf_token==null){settings.data.csrf_token=tok;}}});}var _fetch=window.fetch;if(typeof _fetch==="function"){window.fetch=function(input,init){init=init||{};var tok=t();if(tok){var headers=new Headers(init.headers||{});if(!headers.has("X-CSRF-Token"))headers.set("X-CSRF-Token",tok);init.headers=headers;if(init.method&&String(init.method).toUpperCase()==="POST"&&typeof init.body==="string"&&init.body.indexOf("csrf_token=")<0&&(headers.get("Content-Type")||"").indexOf("application/x-www-form-urlencoded")>=0){init.body+=(init.body.length?"&":"")+"csrf_token="+encodeURIComponent(tok);}if(init.body&&typeof URLSearchParams!=="undefined"&&init.body instanceof URLSearchParams&&!init.body.has("csrf_token")){init.body.append("csrf_token",tok);}}return _fetch(input,init);};}})();</script>';
     }
 

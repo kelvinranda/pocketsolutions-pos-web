@@ -118,6 +118,7 @@ mysqli_close($conn);
                         <th>Old</th>
                         <th>New</th>
                         <th>Source</th>
+                        <th>Reason</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -132,6 +133,7 @@ mysqli_close($conn);
                             <td><?php echo htmlspecialchars((string)($row['old_value'] ?? '')); ?></td>
                             <td><?php echo htmlspecialchars((string)($row['new_value'] ?? '')); ?></td>
                             <td><?php echo htmlspecialchars((string)($row['source'] ?? '')); ?></td>
+                            <td><?php echo htmlspecialchars((string)($row['reason'] ?? '')); ?></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>

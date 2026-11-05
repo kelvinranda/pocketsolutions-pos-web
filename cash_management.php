@@ -47,6 +47,8 @@ if ($signedIn) {
         'register_id' => $registerId,
         'cashier' => $cashier,
         'status' => $status,
+        'fx_view' => $_GET['fx_view'] ?? '',
+        'fx_cur' => $_GET['fx_cur'] ?? '',
     ];
     $dash = psCashReportingDashboard($conn, $filters);
     if (empty($dash['ok'])) {
@@ -69,10 +71,15 @@ if ($signedIn) {
     $error = 'You must be signed in to view cash management.';
 }
 
-mysqli_close($conn);
+// 2026-10-21 currency display: consolidated (base, converted marked) / by currency; counts always in their own currency.
+$fx = isset($dash['filters']['fx']) ? $dash['filters']['fx'] : psFxrContext($conn, $_GET);
+$M = static fn(?array $mix, array $o = []): string => psFxrAmount($conn, $fx, $mix ?? [], $o);
+$B = static fn($v): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, $fx['base']), ENT_QUOTES, 'UTF-8');
+$C = static fn($v, $cur): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, psFxNormalizeCode($cur ?? '') ?: $fx['base']), ENT_QUOTES, 'UTF-8');
+$N = static fn(?array $mix): string => $mix ? psFxrAmount($conn, $fx, $mix, ['native' => true]) : htmlspecialchars(psFxFormat($conn, 0, $fx['base']), ENT_QUOTES, 'UTF-8');
 
-$q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter, $registerId, $cashier, $status, $isAdmin): string {
-    $base = [
+$q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter, $registerId, $cashier, $status, $isAdmin, $fx): string {
+    $base = psFxrQuery($fx) + [
         'from_date' => $fromDate,
         'to_date' => $toDate,
         'register_id' => $registerId > 0 ? (string)$registerId : '',
@@ -170,8 +177,11 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <option value="<?php echo $sk; ?>"<?php echo strtoupper($status) === $sk ? ' selected' : ''; ?>><?php echo htmlspecialchars($sl, ENT_QUOTES, 'UTF-8'); ?></option>
                 <?php endforeach; ?>
             </select>
+            <?php foreach (psFxrQuery($fx) as $fk => $fv): ?><input type="hidden" name="<?php echo $fk; ?>" value="<?php echo htmlspecialchars($fv, ENT_QUOTES, 'UTF-8'); ?>"><?php endforeach; ?>
             <button type="submit">Apply filters</button>
         </form>
+        <?php echo psFxrToolbar($fx, array_filter(['view' => $view, 'from_date' => $fromDate, 'to_date' => $toDate, 'branch' => $isAdmin ? $branchFilter : '', 'register_id' => $registerId > 0 ? (string)$registerId : '', 'cashier' => $cashier, 'status' => $status], fn($v) => $v !== '')); ?>
+        <p class="fxr-label">Each till has one cash drawer per currency. Counts (expected / counted / variance) are always shown in the drawer's own currency: no exchange rate is stored with a count, so they are never converted.</p>
     <?php endif; ?>
 
     <?php if ($dash !== null && $view === 'dashboard'): ?>
@@ -179,17 +189,18 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <div class="cm-cards">
             <div class="cm-card"><div class="lbl">Open tills</div><div class="val"><?php echo (int)$cards['open_tills']; ?></div>
                 <div class="hint">Closed in period: <?php echo (int)$cards['closed_in_period']; ?><br><?php echo htmlspecialchars((string)$cards['branch'], ENT_QUOTES, 'UTF-8'); ?></div></div>
-            <div class="cm-card"><div class="lbl">Expected cash (open)</div><div class="val"><?php echo htmlspecialchars((string)$cards['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></div></div>
-            <div class="cm-card"><div class="lbl">Cash sales</div><div class="val"><?php echo htmlspecialchars((string)$cards['cash_sales'], ENT_QUOTES, 'UTF-8'); ?></div></div>
-            <div class="cm-card"><div class="lbl">Cash in</div><div class="val"><?php echo htmlspecialchars((string)$cards['cash_in'], ENT_QUOTES, 'UTF-8'); ?></div></div>
-            <div class="cm-card"><div class="lbl">Cash out</div><div class="val"><?php echo htmlspecialchars((string)$cards['cash_out'], ENT_QUOTES, 'UTF-8'); ?></div></div>
-            <div class="cm-card"><div class="lbl">Cash refunds</div><div class="val"><?php echo htmlspecialchars((string)$cards['cash_refunds'], ENT_QUOTES, 'UTF-8'); ?></div></div>
+            <div class="cm-card"><div class="lbl">Expected cash (open)</div><div class="val"><?php echo $M($cards['fx_expected'] ?? []); ?></div></div>
+            <div class="cm-card"><div class="lbl">Cash sales</div><div class="val"><?php echo $M($cards['fx_cash_sales'] ?? []); ?></div></div>
+            <div class="cm-card"><div class="lbl">Cash in</div><div class="val"><?php echo $M($cards['fx_cash_in'] ?? []); ?></div></div>
+            <div class="cm-card"><div class="lbl">Cash out</div><div class="val"><?php echo $M($cards['fx_cash_out'] ?? []); ?></div></div>
+            <div class="cm-card"><div class="lbl">Cash refunds</div><div class="val"><?php echo $M($cards['fx_cash_refunds'] ?? []); ?></div></div>
             <div class="cm-card"><div class="lbl">Shortages</div><div class="val"><?php echo (int)$cards['shortages_count']; ?></div>
-                <div class="hint"><?php echo htmlspecialchars((string)$cards['shortages_amount'], ENT_QUOTES, 'UTF-8'); ?></div></div>
+                <div class="hint"><?php echo $N($cards['fx_shortages'] ?? []); ?></div></div>
             <div class="cm-card"><div class="lbl">Surpluses</div><div class="val"><?php echo (int)$cards['surpluses_count']; ?></div>
-                <div class="hint"><?php echo htmlspecialchars((string)$cards['surpluses_amount'], ENT_QUOTES, 'UTF-8'); ?></div></div>
+                <div class="hint"><?php echo $N($cards['fx_surpluses'] ?? []); ?></div></div>
         </div>
 
+        <?php echo psFxrSummary($conn, $fx, $cards['fx_expected'] ?? [], 'Expected cash in open tills, by drawer currency'); ?>
         <?php if (!empty($dash['stale_warnings'])): ?>
             <div class="cm-warn">
                 <h3>Stale reconciliation warning</h3>
@@ -204,9 +215,9 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                             <td><?php echo htmlspecialchars((string)$w['cashier'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$w['till'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$w['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td><?php echo htmlspecialchars((string)$w['last_expected'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td><?php echo htmlspecialchars((string)$w['current_expected'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="stale"><?php echo htmlspecialchars((string)$w['difference'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td><?php echo $B($w['last_expected']); ?></td>
+                            <td><?php echo $B($w['current_expected']); ?></td>
+                            <td class="stale"><?php echo $B($w['difference']); ?></td>
                             <td><?php echo htmlspecialchars((string)$w['recon_date'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><a href="cash_reconciliation.php">Reconcile</a> · <a href="cash_session_view.php?id=<?php echo (int)$w['till_session_id']; ?>">Details</a></td>
                         </tr>
@@ -220,9 +231,9 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <table>
             <thead>
                 <tr>
-                    <th>Branch</th><th>Till</th><th>Cashier</th><th>Opened</th><th>Float</th>
-                    <th>Sales</th><th>Refunds</th><th>In</th><th>Out</th><th>Expected</th>
-                    <th>Recon status</th><th>Recon expected</th><th>Variance</th><th>Currency</th><th></th>
+                    <th>Branch</th><th>Till</th><th>Cashier</th><th>Opened</th><th>Float<br><small><?php echo htmlspecialchars($fx['base']); ?> drawer</small></th>
+                    <th>Sales<br><small><?php echo htmlspecialchars($fx['base']); ?> drawer</small></th><th>Refunds</th><th>In</th><th>Out</th><th>Expected<br><small>all drawers</small></th>
+                    <th>Recon status</th><th>Recon expected</th><th>Variance</th><th>Count up to date?</th><th></th>
                 </tr>
             </thead>
             <tbody>
@@ -234,15 +245,15 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars((string)$row['register_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)$row['cashier'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)$row['opened_at'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['opening_float'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_sales'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_refunds'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_in'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_out'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $B($row['opening_float']); ?></td>
+                    <td><?php echo $B($row['cash_sales']); ?></td>
+                    <td><?php echo $B($row['cash_refunds']); ?></td>
+                    <td><?php echo $B($row['cash_in']); ?></td>
+                    <td><?php echo $B($row['cash_out']); ?></td>
+                    <td><?php echo $M($row['fx_expected'] ?? []); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['latest_recon_status'] ?? '—'), ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)($row['latest_recon_expected'] ?? '—'), ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)($row['variance'] ?? '—'), ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $row['latest_recon_expected'] === null ? '—' : $B($row['latest_recon_expected']); ?></td>
+                    <td><?php echo $row['variance'] === null ? '—' : $B($row['variance']); ?></td>
                     <td class="<?php echo !empty($row['stale']) ? 'stale' : 'ok'; ?>">
                         <?php echo htmlspecialchars(psCashReportingStatusLabel((string)$row['currency']), ENT_QUOTES, 'UTF-8'); ?>
                     </td>
@@ -262,7 +273,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars(psCashMovementTypeLabel($mt), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars($dir, ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo (int)($by[$mt]['count'] ?? 0); ?></td>
-                    <td><?php echo htmlspecialchars((string)($by[$mt]['amount'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $M($by[$mt]['fx'] ?? []); ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
@@ -280,7 +291,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                         <td><?php echo htmlspecialchars(psCashMovementTypeLabel($mt), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$rr['reason_label'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo (int)$rr['count']; ?></td>
-                        <td><?php echo htmlspecialchars((string)$rr['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $M($rr['fx'] ?? []); ?></td>
                     </tr>
                 <?php endforeach; endforeach; ?>
                 </tbody>
@@ -301,9 +312,9 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars((string)$row['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['register_name'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['cashier_email'] ?? $row['reconciled_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['counted_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['variance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $C($row['expected_cash'], $row['currency'] ?? null); ?></td>
+                    <td><?php echo $C($row['counted_cash'], $row['currency'] ?? null); ?></td>
+                    <td><?php echo $C($row['variance'], $row['currency'] ?? null); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['status_label'] ?? $row['status']), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><a href="cash_session_view.php?id=<?php echo (int)$row['till_session_id']; ?>">#<?php echo (int)$row['till_session_id']; ?></a></td>
                 </tr>
@@ -325,9 +336,9 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars((string)$row['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['register_name'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)$row['cashier_email'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['actual_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['variance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $B($row['expected_cash']); ?></td>
+                    <td><?php echo $B($row['actual_cash']); ?></td>
+                    <td><?php echo $B($row['variance']); ?></td>
                     <td><?php echo htmlspecialchars(psCashReconciliationStatusLabel((string)($row['reconciliation_status'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['closed_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                 </tr>
@@ -342,7 +353,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <table>
             <thead>
                 <tr><th>Cashier</th><th>Sessions</th><th>Sales</th><th>Refunds</th><th>In</th><th>Out</th>
-                    <th>Recons</th><th>Balanced</th><th>Shortage #</th><th>Shortage $</th><th>Surplus #</th><th>Surplus $</th></tr>
+                    <th>Recons</th><th>Balanced</th><th>Shortage #</th><th>Shortage</th><th>Surplus #</th><th>Surplus</th></tr>
             </thead>
             <tbody>
             <?php if (empty($cashierSummary['rows'])): ?>
@@ -351,16 +362,16 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                 <tr>
                     <td><?php echo htmlspecialchars((string)$row['cashier'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo (int)$row['sessions']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_sales'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_refunds'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_in'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_out'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_sales'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_refunds'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_in'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_out'] ?? []); ?></td>
                     <td><?php echo (int)$row['recon_count']; ?></td>
                     <td><?php echo (int)$row['balanced_count']; ?></td>
                     <td><?php echo (int)$row['shortage_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['shortage_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_shortage'] ?? []); ?></td>
                     <td><?php echo (int)$row['surplus_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['surplus_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_surplus'] ?? []); ?></td>
                 </tr>
             <?php endforeach; endif; ?>
             </tbody>
@@ -373,7 +384,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
             <thead>
                 <tr><th>Branch</th><th>Till</th><th>Sessions</th><th>Open</th><th>Closed</th>
                     <th>Sales</th><th>Refunds</th><th>In</th><th>Out</th>
-                    <th>Shortage #</th><th>Shortage $</th><th>Surplus #</th><th>Surplus $</th></tr>
+                    <th>Shortage #</th><th>Shortage</th><th>Surplus #</th><th>Surplus</th></tr>
             </thead>
             <tbody>
             <?php if (empty($tillSummary['rows'])): ?>
@@ -385,14 +396,14 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo (int)$row['sessions']; ?></td>
                     <td><?php echo (int)$row['open_sessions']; ?></td>
                     <td><?php echo (int)$row['closed_sessions']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_sales'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_refunds'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_in'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_out'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_sales'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_refunds'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_in'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_out'] ?? []); ?></td>
                     <td><?php echo (int)$row['shortage_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['shortage_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_shortage'] ?? []); ?></td>
                     <td><?php echo (int)$row['surplus_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['surplus_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_surplus'] ?? []); ?></td>
                 </tr>
             <?php endforeach; endif; ?>
             </tbody>
@@ -405,7 +416,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <table>
             <thead>
                 <tr><th>Branch</th><th>Open tills</th><th>Closed sessions</th><th>Sales</th><th>Refunds</th>
-                    <th>In</th><th>Out</th><th>Shortages</th><th>Shortage $</th><th>Surpluses</th><th>Surplus $</th></tr>
+                    <th>In</th><th>Out</th><th>Shortages</th><th>Shortage</th><th>Surpluses</th><th>Surplus</th></tr>
             </thead>
             <tbody>
             <?php if (empty($branchSummary['rows'])): ?>
@@ -415,14 +426,14 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars((string)$row['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo (int)$row['open_tills']; ?></td>
                     <td><?php echo (int)$row['closed_sessions']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_sales'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_refunds'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_in'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['cash_out'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_sales'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_refunds'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_in'] ?? []); ?></td>
+                    <td class="num"><?php echo $M($row['fx_cash_out'] ?? []); ?></td>
                     <td><?php echo (int)$row['shortages_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['shortages_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_shortage'] ?? []); ?></td>
                     <td><?php echo (int)$row['surpluses_count']; ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['surpluses_amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td class="num"><?php echo $N($row['fx_surplus'] ?? []); ?></td>
                 </tr>
             <?php endforeach; endif; ?>
             </tbody>
@@ -435,7 +446,7 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <table>
             <thead>
                 <tr><th>Session</th><th>Branch</th><th>Till</th><th>Cashier</th><th>Opened</th><th>Closed</th>
-                    <th>Expected</th><th>Actual</th><th>Variance</th><th>Status</th><th></th></tr>
+                    <th>Expected (<?php echo htmlspecialchars($fx['base']); ?> drawer)</th><th>Actual</th><th>Variance<br><small>other drawers below</small></th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
             <?php if (empty($history['rows'])): ?>
@@ -448,9 +459,9 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
                     <td><?php echo htmlspecialchars((string)$row['cashier_email'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)$row['opened_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)$row['closed_at'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['actual_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['variance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $B($row['expected_cash']); ?></td>
+                    <td><?php echo $B($row['actual_cash']); ?></td>
+                    <td><?php echo $B($row['variance']); ?><?php foreach (($row['currency_counts'] ?? []) as $cc => $cr): ?><br><small><?php echo $C($cr['counted_cash'], $cc); ?> counted · <?php echo $C($cr['variance'], $cc); ?></small><?php endforeach; ?></td>
                     <td><?php echo htmlspecialchars((string)($row['variance_status_label'] ?? $row['reconciliation_status'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><a href="cash_session_view.php?id=<?php echo (int)$row['id']; ?>">Details</a></td>
                 </tr>
@@ -471,6 +482,6 @@ $q = static function (array $extra = []) use ($fromDate, $toDate, $branchFilter,
         <?php endif; ?>
     <?php endif; ?>
 
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

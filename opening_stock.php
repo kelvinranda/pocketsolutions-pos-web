@@ -9,6 +9,7 @@ if (!$conn) {
 }
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/stock_movement.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 $company = trim((string)($_SESSION['the_company'] ?? ''));
 $email = trim((string)($_SESSION['logger'] ?? ''));
@@ -114,6 +115,23 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         $pageError = 'Select a branch you can use.';
     } else {
         $branch = $postedBranch;
+        // 2026-10-28 packs: counts entered in packs become base units at the review step (whole units checked).
+        if ($action === 'review' && isset($_POST['qty']) && is_array($_POST['qty'])) {
+            $sel = array_values(array_map('strval', (array)($_POST['selected'] ?? [])));
+            $q = array_intersect_key((array)$_POST['qty'], array_flip($sel));
+            $cv = psPackConvertRows($conn, $company, array_combine(array_keys($q), array_keys($q)) ?: [], $q, (array)($_POST['unit'] ?? []));
+            if (empty($cv['ok'])) {
+                $pageError = (string)$cv['error'];
+                $_POST['selected'] = [];
+            } else {
+                foreach ($cv['qtys'] as $pid => $v) {
+                    $_POST['qty'][$pid] = $v;
+                    if (!empty($cv['notes'][$pid])) {
+                        $_POST['reason'][$pid] = trim(substr(trim((string)($_POST['reason'][$pid] ?? '')) . ' [' . $cv['notes'][$pid] . ']', 0, 300));
+                    }
+                }
+            }
+        }
         $lines = psOpeningPostedLines($_POST, $branch, $company, $email, $userId);
         if ($action === 'start_all') {
             // 2026-10-14: track every remaining product at this branch from its calculated stock.
@@ -195,8 +213,7 @@ if ($branch !== '' && $phase === 'list') {
     }
 }
 $activeBranch = $branch !== '' ? $branch : 'No branch selected';
-
-mysqli_close($conn);
+// The connection stays open for the page (2026-10-28: unit pickers read the packs); closed at the end.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -355,6 +372,7 @@ mysqli_close($conn);
                                         <?php echo htmlspecialchars($row['opening_plain'], ENT_QUOTES, 'UTF-8'); ?>
                                     <?php elseif ($row['legacy'] !== null): ?>
                                         <input type="text" name="qty[<?php echo htmlspecialchars($row['product_id'], ENT_QUOTES, 'UTF-8'); ?>]" value="<?php echo htmlspecialchars($row['legacy_plain'], ENT_QUOTES, 'UTF-8'); ?>" inputmode="decimal">
+                                        <?php echo psPackUnitSelect($conn, $company, (string)$row['product_id'], 'unit[' . $row['product_id'] . ']'); ?>
                                     <?php endif; ?>
                                 </td>
                                 <td>
@@ -370,6 +388,6 @@ mysqli_close($conn);
             <p><button type="submit">Review selected</button></p>
         </form>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

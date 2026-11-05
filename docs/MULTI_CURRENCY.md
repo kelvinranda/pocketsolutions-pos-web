@@ -140,7 +140,7 @@ data entered after deployment in other currencies would be lost in that case.
 - **Purchase orders / goods received / expenses:** pick the currency the supplier invoiced in.
 - **Exchange rates (managers):** Finance › Exchange Rates → add "1 [base] = x [currency]" with the time it starts. To
   correct a mistake, retire the wrong rate with a reason and add the right one. Rates already used by sales stay on record.
-- **Reports:** totals are in the company base currency; Sales Reports › By currency shows each currency on its own.
+- **Reports:** see section 7 — Consolidated (base, at stored rates) or By currency, a Currency filter, a ⇄ tag on converted amounts (hover / focus + Enter / tap for the original amount and rate), and a red warning when a rate is missing.
 
 ---
 
@@ -159,3 +159,78 @@ data entered after deployment in other currencies would be lost in that case.
 - **Mobile app** (on hold) still sells in the base only.
 - **ZIMRA:** receipts in ZWG/other currencies are tested against the built-in simulator only; live FDMS acceptance of each
   currency depends on the device's ZIMRA configuration.
+
+---
+
+## 7. Currency-specific reporting and auditability (2026-10-21)
+
+Rule: **no report adds amounts of different currencies together.** Shared code: web `includes/fx_report.php`
+(the "mix" model), desktop `PocketsPos.Core/Domain/FxMix.cs` (same rules, same colours).
+
+### 7.1 Model
+- Every total is kept **per transaction currency** (count, amount in that currency, base equivalent, rates used, first/last
+  date, up to 5 references).
+- The **consolidated** total is in the company base and uses the base amount **stored with each transaction**
+  (`base_total`, `base_amount`, `fx_rate` of the sale / refund / PO / GRV / expense / payment). Today's rate is never used.
+- **Missing rate:** a non-base row without a stored base amount is shown in its own currency, **left out** of the
+  consolidated total (never counted 1:1), and the total is flagged incomplete (`*`, red warning on the page, "(incomplete)"
+  in exports).
+- **Legacy:** a row with no currency (recorded before multi-currency) counts in the base and is flagged "legacy".
+- **Cash** (drawer balances, counts, variances, cash in / out) has no stored rate by design: always shown per currency
+  ("native"), never converted.
+- Line-level amounts (products, tax, profit) use the sale's own stored ratio `base_total ÷ total`.
+
+### 7.2 Display
+- Toolbar on every report: **Consolidated (base) / By currency** toggle (`fx_view=breakdown`) and **Currency** filter
+  (`fx_cur=XXX`) — combined with the existing date / branch / cashier filters. Desktop: the same chips under the period filter
+  (shown only when the company has more than one currency).
+- Converted amounts carry a tag with the **currency code** (never colour alone) in that currency's colour
+  (ZWG amber, ZAR teal, USD blue, BWP violet, EUR rose, GBP green; others by crc32, same on web and desktop).
+  The detail (original amount, rate with direction "1 USD = 26.50 ZWG", rate date / recorded date, references, missing rows)
+  opens on hover, keyboard focus + Enter/Space, and click / tap; Escape closes. Web: `role=button`, `aria-describedby`,
+  `role=tooltip`; desktop: tooltip + popup, `AutomationProperties.HelpText`.
+- Per-currency subtotals are shown before the consolidated total (Sales › By currency, Z report, tax, cash, summaries).
+
+### 7.3 Coverage
+| Area | Web | Desktop till |
+|---|---|---|
+| Sales (list, cashier, product, methods, by currency, invoice) | sales_reports.php, all_receipts.php, cashier_sales.php | Sales Reports (incl. By currency tab) |
+| Z report (screen, PDF, print) | z_report.php, generate_pdf.php | Z Report + printed Z (per currency then total) |
+| Refunds / refund reconciliation | sales refunds tab, refund_recon_*.php | Refunds tab, Refund reconciliation (amounts in the sale currency) |
+| Dashboards | management_dashboard.php | Management Dashboard |
+| Till / cash | cash_management.php, movements, reconciliation, closure, session view (drawer per currency) | Cash Management (KPIs, movements, counts per currency, shop tills), Cash audit, till KPIs labelled "base drawer" |
+| Tax | tax_reports.php (per code per currency, at each sale's rate) | Tax Reports (same) |
+| Profit / income | profit_report.php, income_statement.php | Profit & Margin |
+| Inventory valuation | inventory_reports.php, product_history.php (base cost / price, labelled) | Inventory Reports (base prices, labelled) |
+| Purchases / suppliers | purchasing_reports.php, supplier history, PO / GRV / return views | — (not on the till) |
+| Customer accounts | ageing (each sale's stored rate), statements, credit control, payments | — (account payments only) |
+| Expenses | expenses.php | — |
+| Accounting export / preview / recon | accounting*.php (source currency + base) | — |
+| ZIMRA fiscal receipts | — | per-currency totals (no consolidation) |
+| CSV / PDF | currency, original amount, rate, base columns; per-currency TOTAL rows | `[CODE]` tag on converted cells, "Currency detail" column (CSV) / section (PDF), warning line |
+
+### 7.4 Bugs fixed while doing this (they mixed currencies)
+Web: tax summary, Z report PDF, cash movement totals and variances, open-till batch balances, supplier PO / return totals,
+credit-control overdue total, dashboard recent-sales total, income statement (1:1 fallback for missing rates), receivables
+ageing (re-valued at the as-at rate). Desktop: `COALESCE(base_total_cents, total_cents)` counted missing rates at face value;
+tax, cash in / out / refunds, shop-till totals, till ledger totals, the session sales total, ZIMRA receipt totals and the cash
+audit all added amounts across currencies.
+
+### 7.5 Database
+Additive only. Desktop schema v12: `v_sales` exposes `base_raw` (stored base, NULL kept) and `fx_rate`; `lan_cash.currency`
+(other tills' cash in / out), `v_cash_movements.currency`. Web: no new columns (uses the 2026-10-20 ones).
+
+### 7.6 Tests
+- Web: `t_fxr.php` 41/41 (mix maths, display, tooltip accessibility, legacy / missing flags, CSV columns, sales reconcile to
+  the database, currency filter, drawer balances match the till ledger, cash per currency, tax with stored lines, ageing not
+  re-valued, branch scope); existing suites unchanged.
+- Desktop: "Currency-specific reporting" + "…screens" tests; full suite 47/47.
+- **Not verified:** real browser rendering / tooltip behaviour with a screen reader, the WPF screens on Windows (the WPF
+  project cannot be compiled in the build container), printed output on a receipt printer, PDF appearance by eye.
+
+### 7.7 Limitations
+- Cash counts and cash movements have no stored rate, so cash figures are per currency only.
+- Other tills' cash refunds on the shop network take the currency of the refunded sale; movements from tills older than this
+  version have no currency and count in the base (flagged legacy).
+- Credit control's "significant outstanding" threshold is a fixed 100 in each account's own currency (ZiG 100 is not $100); the overdue totals themselves are per currency.
+- Desktop reports cover this PC (or the shop network); live has every till.

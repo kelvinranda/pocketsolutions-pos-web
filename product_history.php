@@ -235,7 +235,11 @@ if (in_array($exportFormat, psReportExportFormats(), true) && $results) {
     $item = $results[0];
     $d = fn($v) => date('Y-m-d', strtotime((string)$v));
     $sections = [
-        ['heading' => 'Summary', 'columns' => ['Product ID', 'Product', 'Branch', 'Price', 'Cost price', 'Total received', 'Transferred in', 'Transferred out', 'Total sold', 'Current stock', 'Stock value (price)', 'Stock value (cost)'],
+        ['heading' => 'Summary', 'columns' => (function () use ($conn) {
+            require_once __DIR__ . '/includes/currency.php';
+            $b = psFxBase($conn, psFxSessionCompany()); // product prices and costs are kept in the base currency
+            return ['Product ID', 'Product', 'Branch', "Price ($b)", "Cost price ($b)", 'Total received', 'Transferred in', 'Transferred out', 'Total sold', 'Current stock', "Stock value at price ($b)", "Stock value at cost ($b)"];
+        })(),
          'rows' => array_map(fn($it) => [$it['product_id'], $it['product'], $it['branch'] ?? '', $it['price'], $it['cost_price'], $it['total_received'], $total_movement, $total_movement_out, $it['total_sold'], $it['current_stock'], $it['stock_value_price'], $it['stock_value_cost']], $results)],
         ['heading' => 'Goods receipts', 'columns' => ['Invoice', 'Product', 'Quantity', 'Date', 'Supplier', 'Status'], 'empty' => 'No receipts in this period.',
          'rows' => array_map(fn($r) => [$r['invoice_number'], $r['product'], $r['quantity'], $d($r['date_']), $r['supplier_name'], $r['status']], $goods_receipts)],

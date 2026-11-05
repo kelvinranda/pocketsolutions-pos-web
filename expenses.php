@@ -23,7 +23,10 @@ if (!$conn) {
 mysqli_set_charset($conn, 'utf8mb4');
 // Multi-currency (2026-10-20): amounts show in their own currency (Funding Account) plus the base equivalent.
 require_once __DIR__ . '/includes/currency.php';
-$expBaseCol = psFxHasColumn($conn, 'expenses', 'base_amount') ? ', base_amount' : ', NULL AS base_amount';
+require_once __DIR__ . '/includes/expense_company.php'; // 2026-11-02: this company's expenses only
+$expCo = psExpenseCompanySql($conn);
+psFxEnsureTransactionColumns($conn);
+$expBaseCol = psFxHasColumn($conn, 'expenses', 'base_amount') ? ', base_amount, currency, fx_rate, fx_rate_ids' : ', NULL AS base_amount, NULL AS currency, NULL AS fx_rate, NULL AS fx_rate_ids';
 $expBaseCur = psFxBase($conn, psFxSessionCompany());
 
 $expense_id = $expense_name = $month = $year = '';
@@ -36,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $year = trim((string)($_POST['year'] ?? ''));
 
     $sql = 'SELECT expense_name, funding_account, narration, amount, transaction_date' . $expBaseCol . '
-            FROM expenses WHERE 1=1';
+            FROM expenses WHERE ' . $expCo;
     $types = '';
     $params = [];
 
@@ -90,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
     mysqli_stmt_close($stmt);
 } else {
-    $stmt = mysqli_prepare($conn, 'SELECT expense_name, funding_account, narration, amount, transaction_date' . $expBaseCol . ' FROM expenses');
+    $stmt = mysqli_prepare($conn, 'SELECT expense_name, funding_account, narration, amount, transaction_date' . $expBaseCol . ' FROM expenses WHERE ' . $expCo);
     if (!$stmt || !mysqli_stmt_execute($stmt)) {
         error_log('expenses: list failed');
         echo 'Expenses could not be loaded.';
@@ -109,7 +112,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     mysqli_stmt_close($stmt);
 }
 
-mysqli_close($conn);
+// 2026-10-21: each expense in its own currency; base column = stored base amount; totals per currency, then base.
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = psFxrContext($conn, $_GET);
+$expensesData = array_values(array_filter($expenses_data, fn($e) => psFxrRowMatches($fx, $e['currency'] ?? null)));
+$expMix = [];
+foreach ($expensesData as $e) {
+    psFxrAdd($expMix, $fx, $e['currency'] ?? null, $e['amount'], $e['base_amount'] ?? null, ['rate' => (string)($e['fx_rate'] ?? '')]);
+}
 ?>
 
 <!DOCTYPE html>
@@ -148,24 +158,28 @@ mysqli_close($conn);
             </tr>
         </thead>
         <tbody>
-            <?php if (empty($expenses_data)): ?>
+            <?php if (empty($expensesData)): ?>
                 <tr>
                     <td colspan="5">No expenses found.</td>
                 </tr>
             <?php else: ?>
-                <?php foreach ($expenses_data as $expense): ?>
+                <?php foreach ($expensesData as $expense): $eCur = psFxNormalizeCode($expense['currency'] ?? '') ?: psFxLegacyCurrency(); ?>
                     <tr>
                         <td><?php echo htmlspecialchars($expense['expense_name']); ?></td>
                         <td><?php echo htmlspecialchars($expense['funding_account']); ?></td>
                         <td><?php echo htmlspecialchars($expense['narration']); ?></td>
-                        <td><?php echo htmlspecialchars($expense['amount']); ?></td>
-                        <td><?php echo htmlspecialchars((string)($expense['base_amount'] ?? $expense['amount'])); ?></td>
+                        <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $expense['amount'], $eCur)); ?><?php if (($expense['currency'] ?? null) === null): ?> <span class="fxa-tag" title="Recorded before currencies were stored">legacy</span><?php endif; ?></td>
+                        <td class="num"><?php echo psFxrOne($conn, ['view' => PS_FXR_CONSOLIDATED] + $fx, $expense['currency'] ?? null, $expense['amount'], $expense['base_amount'] ?? null, ['rate' => (string)($expense['fx_rate'] ?? ''), 'ids' => (string)($expense['fx_rate_ids'] ?? '')]); ?></td>
                         <td><?php echo htmlspecialchars($expense['transaction_date']); ?></td>
                     </tr>
                 <?php endforeach; ?>
             <?php endif; ?>
         </tbody>
+        <?php if ($expensesData): ?>
+        <tfoot><tr><th colspan="3">Total</th><th class="num"><?php echo psFxrAmount($conn, ['view' => PS_FXR_BREAKDOWN] + $fx, $expMix); ?></th><th class="num"><?php echo psFxrAmount($conn, ['view' => PS_FXR_CONSOLIDATED] + $fx, $expMix, ['strong' => true]); ?></th><th></th></tr></tfoot>
+        <?php endif; ?>
     </table>
-<?php ps_close(); ?>
+    <?php echo psFxrSummary($conn, $fx, $expMix, 'Expenses by currency'); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

@@ -5,6 +5,7 @@ require_once __DIR__ . '/includes/stock_movement.php';
 require_once __DIR__ . '/includes/product_master.php';
 require_once __DIR__ . '/includes/barcode.php';
 require_once __DIR__ . '/includes/catalog_setup.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -47,7 +48,13 @@ if ($company !== '') {
 if ($search !== '') {
     $searchLike = mysqli_real_escape_string($conn, $search);
     $searchLike = str_replace(['%', '_'], ['\\%', '\\_'], $searchLike);
-    $where[] = psBarcodeSearchSqlClause($conn, $searchLike);
+    // 2026-10-28: a pack barcode finds its product too.
+    $packHit = '';
+    if (psPackEnsureSchema($conn)) {
+        $packHit = " OR product_id IN (SELECT pp.product_id FROM product_packs pp WHERE pp.company_name = '$companyEsc' AND pp.active = 1 AND pp.barcode = '"
+            . mysqli_real_escape_string($conn, $search) . "')";
+    }
+    $where[] = '(' . psBarcodeSearchSqlClause($conn, $searchLike) . $packHit . ')';
 }
 // POS button tabs use goods.button_category only (not goods.category).
 if ($category !== '' && $search === '') {
@@ -57,7 +64,11 @@ if ($category !== '' && $search === '') {
 $whereSql = 'WHERE ' . implode(' AND ', $where);
 
 psCatalogEnsureSchema($conn);
-$res = mysqli_query($conn, "SELECT product_id, product, price, button_category, category, quantity, pack_size, barcode, unit_of_measure, sell_by_measure, variant_group, variant_base, variant_label FROM goods $whereSql ORDER BY product, product_id LIMIT 600");
+psPackEnsureSchema($conn);
+$res = mysqli_query($conn, "SELECT product_id, product, price, button_category, category, quantity, pack_size, barcode, unit_of_measure, sell_by_measure, variant_group, variant_base, variant_label, base_unit FROM goods $whereSql ORDER BY product, product_id LIMIT 600");
+if (!$res) {
+    $res = mysqli_query($conn, "SELECT product_id, product, price, button_category, category, quantity, pack_size, barcode, unit_of_measure, sell_by_measure, variant_group, variant_base, variant_label FROM goods $whereSql ORDER BY product, product_id LIMIT 600");
+}
 if (!$res) {
     $res = mysqli_query($conn, "SELECT product_id, product, price, button_category, category, quantity, pack_size, barcode FROM goods $whereSql ORDER BY product, product_id LIMIT 400");
 }
@@ -118,6 +129,11 @@ foreach ($rawRows as $row) {
         'variant_group' => (string)($row['variant_group'] ?? ''),
         'variant_base' => (string)($row['variant_base'] ?? ''),
         'variant_label' => (string)($row['variant_label'] ?? ''),
+        // 2026-10-28 packs: base unit label (blank = none set) and the packs this product is sold in.
+        'base_unit' => trim((string)($row['base_unit'] ?? '')),
+        'packs' => [],
+        'whole' => false,
+        'stock_text' => null,
     ];
 }
 
@@ -128,6 +144,21 @@ if ($products && $branch !== '') {
         $productId = (string)$product['product_id'];
         if (array_key_exists($productId, $ledger)) {
             $products[$index]['ledger_qty'] = $ledger[$productId];
+        }
+    }
+}
+if ($products && $company !== '') {
+    $packsBy = psPackListForCompany($conn, $company, true);
+    foreach ($products as $index => $product) {
+        $packs = $packsBy[(string)$product['product_id']] ?? [];
+        $sellable = array_values(array_filter($packs, static fn ($p) => $p['price'] !== null));
+        $label = $product['base_unit'] !== '' ? $product['base_unit'] : 'unit';
+        $products[$index]['packs'] = array_map(static fn ($p) => ['id' => $p['id'], 'name' => $p['name'], 'factor' => $p['factor'],
+            'factor_milli' => $p['factor_milli'], 'price' => (float)$p['price'], 'barcode' => $p['barcode']], $sellable);
+        $products[$index]['whole'] = empty($product['measure']) && ($packs !== [] || $product['base_unit'] !== '');
+        $products[$index]['base_label'] = $label;
+        if ($product['ledger_qty'] !== null && ($packs !== [] || $product['base_unit'] !== '')) {
+            $products[$index]['stock_text'] = psPackFormatStock((int)psStockMilli((string)$product['ledger_qty']), $packs, $label);
         }
     }
 }

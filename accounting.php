@@ -25,7 +25,8 @@ foreach ($maps as $m) {
         $configured++;
     }
 }
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
+$accBase = psFxBase($conn, psFxSessionCompany()); // journals are in the company base (each source at its stored rate)
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -100,8 +101,8 @@ $h = static function ($v): string {
                 <td><?php echo $h($b['external_status']); ?></td>
                 <td><?php echo $h($b['from_date'] . ' → ' . $b['to_date']); ?></td>
                 <td><?php echo (int)$b['all_branches'] === 1 ? 'All authorised' : $h($b['branch_filter']); ?></td>
-                <td><?php echo $h($b['total_debit']); ?></td>
-                <td><?php echo $h($b['total_credit']); ?></td>
+                <td class="num"><?php echo $h(psFxFormat($conn, $b['total_debit'], $accBase)); ?></td>
+                <td class="num"><?php echo $h(psFxFormat($conn, $b['total_credit'], $accBase)); ?></td>
                 <td><a class="ps-btn ps-btn-outline ps-btn-sm" href="accounting_batches.php?id=<?php echo (int)$b['id']; ?>">View</a></td>
             </tr>
         <?php endforeach; ?>
@@ -119,6 +120,6 @@ $h = static function ($v): string {
     <?php endforeach; ?>
     </ul>
 </section>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

@@ -66,8 +66,30 @@ if (!$signedIn) {
         $rows = $result['rows'] ?? [];
     }
 }
-
-mysqli_close($conn);
+// 2026-10-21 currency: each document in its own currency with its stored rate; totals per currency, then base.
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = psFxrContext($conn, $_GET);
+$rows = array_values(array_filter($rows, fn($r) => psFxrRowMatches($fx, $r['currency'] ?? null)));
+$prMix = [];
+$prCell = function (array $r) use ($conn, $fx, $report, &$prMix): string {
+    if ($report === 'po') {
+        $amt = (string)($r['_ordered_value'] ?? '0');
+        $rate = (float)($r['fx_rate'] ?? 0);
+        $base = $rate > 0 ? number_format(round((float)$amt / $rate, 2), 2, '.', '') : null;
+        $ref = 'PO ' . ($r['po_number'] ?? '');
+    } elseif ($report === 'grv') {
+        $amt = (string)($r['totalz'] ?? '0');
+        $base = $r['base_total'] ?? null;
+        $ref = 'GRV ' . ($r['grv_number'] ?? '');
+    } else {
+        $amt = (string)($r['total'] ?? '0');
+        $base = $r['base_total'] ?? null;
+        $ref = 'Return ' . ($r['return_number'] ?? '');
+    }
+    $meta = ['rate' => (string)($r['fx_rate'] ?? ''), 'ids' => (string)($r['fx_rate_ids'] ?? ''), 'ref' => $ref];
+    psFxrAdd($prMix, $fx, $r['currency'] ?? null, $amt, $base, $meta);
+    return psFxrOne($conn, $fx, $r['currency'] ?? null, $amt, $base, $meta);
+};
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -131,7 +153,9 @@ mysqli_close($conn);
             <?php endif; ?>
             <button type="submit">Run</button>
             <a href="?report=<?php echo htmlspecialchars($report, ENT_QUOTES, 'UTF-8'); ?>&amp;from_date=<?php echo htmlspecialchars($fromDate, ENT_QUOTES, 'UTF-8'); ?>&amp;to_date=<?php echo htmlspecialchars($toDate, ENT_QUOTES, 'UTF-8'); ?>&amp;branch=<?php echo htmlspecialchars($branchFilter, ENT_QUOTES, 'UTF-8'); ?>&amp;supplier_id=<?php echo (int)$supplierId; ?>&amp;status=<?php echo htmlspecialchars($statusFilter, ENT_QUOTES, 'UTF-8'); ?>&amp;grv_number=<?php echo htmlspecialchars($grvFilter, ENT_QUOTES, 'UTF-8'); ?>&amp;export=csv">Export CSV</a>
+            <?php foreach (psFxrQuery($fx) as $fk => $fv): ?><input type="hidden" name="<?php echo $fk; ?>" value="<?php echo htmlspecialchars($fv, ENT_QUOTES, 'UTF-8'); ?>"><?php endforeach; ?>
         </form>
+        <?php $keep = $_GET; unset($keep['export']); echo psFxrToolbar($fx, $keep); ?>
 
         <?php if ($report === 'po'): ?>
             <table>
@@ -154,7 +178,7 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)$row['_ordered_qty'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['_received_qty'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['_remaining_qty'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['_ordered_value'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $prCell($row); ?></td>
                     </tr>
                 <?php endforeach; endif; ?>
                 </tbody>
@@ -178,7 +202,7 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)($row['reference1'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['date_'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['totalz'] . ' ' . (string)($row['currency'] ?? $row['payment_mode'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $prCell($row); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['created_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     </tr>
                 <?php endforeach; endif; ?>
@@ -203,7 +227,7 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars(trim((string)($row['supplier_code'] ?? '') . ' ' . (string)$row['supplier_name']), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['return_date'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $prCell($row); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['created_by'], ENT_QUOTES, 'UTF-8'); ?></td>
                     </tr>
                 <?php endforeach; endif; ?>
@@ -211,6 +235,7 @@ mysqli_close($conn);
             </table>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php echo psFxrSummary($conn, $fx, $prMix, 'Totals by currency'); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

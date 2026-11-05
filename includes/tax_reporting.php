@@ -161,91 +161,120 @@ function psTaxReportingSummary(mysqli $conn, array $raw): array
         $params[] = $f['tax_code'];
     }
 
-    $sql = "SELECT s.tax_code, s.tax_classification, s.tax_rate_percent, s.tax_pricing_mode,
-                   COUNT(*) AS line_count,
-                   IFNULL(SUM(CAST(s.taxable_amount AS DECIMAL(14,2))), 0) AS taxable_base,
-                   IFNULL(SUM(CAST(s.tax_amount AS DECIMAL(14,2))), 0) AS tax_collected,
-                   IFNULL(SUM(CASE WHEN s.tax_classification = 'ZERO_RATED'
-                        THEN CAST(IFNULL(s.line_total_excl, s.taxable_amount) AS DECIMAL(14,2)) ELSE 0 END), 0) AS zero_rated_base,
-                   IFNULL(SUM(CASE WHEN s.tax_classification = 'EXEMPT'
-                        THEN CAST(IFNULL(s.line_total_excl, s.revenue) AS DECIMAL(14,2)) ELSE 0 END), 0) AS exempt_turnover
+    // 2026-10-21 multi-currency: every tax line is in its sale's currency. Totals are kept per currency (mixes) and the
+    // consolidated figures use each sale's STORED rate (line amount / sale fx_rate). Lines are never added across
+    // currencies without that conversion.
+    require_once __DIR__ . '/fx_report.php';
+    $ctx = psFxrContext($conn, $raw);
+    $lineWhere .= psFxrCurFilterSql($conn, $ctx, 'r.currency');
+    $zrAmt = "CASE WHEN s.tax_classification = 'ZERO_RATED' THEN CAST(IFNULL(s.line_total_excl, s.taxable_amount) AS DECIMAL(14,2)) ELSE 0 END";
+    $exAmt = "CASE WHEN s.tax_classification = 'EXEMPT' THEN CAST(IFNULL(s.line_total_excl, s.revenue) AS DECIMAL(14,2)) ELSE 0 END";
+    $sql = "SELECT s.tax_code AS k0, s.tax_classification AS k1, s.tax_rate_percent AS k2, s.tax_pricing_mode AS k3, "
+        . psFxrAggSelectSql($conn, $ctx, 'r.currency', 'CAST(s.taxable_amount AS DECIMAL(14,2))', null, 'r.fx_rate') . ', '
+        . psFxrAggSelectSql($conn, $ctx, 'r.currency', 'CAST(s.tax_amount AS DECIMAL(14,2))', null, 'r.fx_rate', 'tc_') . ', '
+        . psFxrAggSelectSql($conn, $ctx, 'r.currency', $zrAmt, null, 'r.fx_rate', 'zr_') . ', '
+        . psFxrAggSelectSql($conn, $ctx, 'r.currency', $exAmt, null, 'r.fx_rate', 'ex_') . "
             FROM online_sales s
             INNER JOIN online_sales_ref r ON r.invoice_number = s.invoice_number
             WHERE {$lineWhere}
-            GROUP BY s.tax_code, s.tax_classification, s.tax_rate_percent, s.tax_pricing_mode
-            ORDER BY s.tax_code ASC, s.tax_rate_percent ASC";
-    $stmt = mysqli_prepare($conn, $sql);
-    if (!$stmt) {
+            GROUP BY s.tax_code, s.tax_classification, s.tax_rate_percent, s.tax_pricing_mode, r.currency";
+    $g = psFxrGrouped($conn, $ctx, $sql, $types, $params, 4, [], ['tc_', 'zr_', 'ex_'], false);
+    if (empty($g['ok'])) {
         return ['ok' => false, 'error' => 'Tax report could not be loaded.'];
     }
-    if ($types !== '') {
-        $bind = [$types];
-        foreach ($params as $k => $v) {
-            $bind[] = &$params[$k];
-        }
-        call_user_func_array([$stmt, 'bind_param'], $bind);
-    }
-    if (!mysqli_stmt_execute($stmt)) {
-        mysqli_stmt_close($stmt);
-        return ['ok' => false, 'error' => 'Tax report could not be loaded.'];
-    }
-    $res = mysqli_stmt_get_result($stmt);
+    $groups = $g['groups'];
+    usort($groups, fn($x, $y) => strcmp((string)$x['keys'][0], (string)$y['keys'][0]) ?: ((float)$x['keys'][2] <=> (float)$y['keys'][2]));
     $rows = [];
-    $totTaxable = '0.00';
-    $totTax = '0.00';
-    $totZero = '0.00';
-    $totExempt = '0.00';
-    while ($res && ($row = mysqli_fetch_assoc($res))) {
-        $taxable = psReportingMoneyFormat($row['taxable_base']);
-        $tax = psReportingMoneyFormat($row['tax_collected']);
-        $zero = psReportingMoneyFormat($row['zero_rated_base']);
-        $exempt = psReportingMoneyFormat($row['exempt_turnover']);
+    $mTaxable = $mTax = $mZero = $mExempt = [];
+    foreach ($groups as $grp) {
+        [$code, $classRaw, $rate, $mode] = $grp['keys'];
+        $class = strtoupper(trim((string)$classRaw));
+        $mixTaxable = $grp['mix'];
+        $mixTax = $grp['mixes']['tc_'] ?? [];
+        $mixZero = $grp['mixes']['zr_'] ?? [];
+        $mixExempt = $grp['mixes']['ex_'] ?? [];
         // For TAXABLE rows taxable_base is excl-tax; for ZERO_RATED use zero_rated_base as the reported base.
-        $class = strtoupper(trim((string)$row['tax_classification']));
-        $displayBase = $class === PS_TAX_CLASS_ZERO_RATED ? $zero
-            : ($class === PS_TAX_CLASS_EXEMPT ? $exempt : $taxable);
+        $displayMix = $class === PS_TAX_CLASS_ZERO_RATED ? $mixZero : ($class === PS_TAX_CLASS_EXEMPT ? $mixExempt : $mixTaxable);
         $rows[] = [
-            'tax_code' => (string)$row['tax_code'],
+            'tax_code' => (string)$code,
             'classification' => $class,
-            'rate_percent' => number_format((float)$row['tax_rate_percent'], 4, '.', ''),
-            'pricing_mode' => (string)$row['tax_pricing_mode'],
-            'line_count' => (int)$row['line_count'],
-            'taxable_base' => $displayBase,
-            'tax_collected' => $tax,
-            'zero_rated_base' => $zero,
-            'exempt_turnover' => $exempt,
+            'rate_percent' => number_format((float)$rate, 4, '.', ''),
+            'pricing_mode' => (string)$mode,
+            'line_count' => (int)$grp['n'],
+            'taxable_base' => psFxrMoney(psFxrBase($displayMix)),
+            'tax_collected' => psFxrMoney(psFxrBase($mixTax)),
+            'zero_rated_base' => psFxrMoney(psFxrBase($mixZero)),
+            'exempt_turnover' => psFxrMoney(psFxrBase($mixExempt)),
+            'fx_base' => $displayMix,
+            'fx_tax' => $mixTax,
+            'fx_zero' => $mixZero,
+            'fx_exempt' => $mixExempt,
         ];
         if ($class === PS_TAX_CLASS_TAXABLE) {
-            $totTaxable = psReportingMoneyAdd($totTaxable, $taxable);
-            $totTax = psReportingMoneyAdd($totTax, $tax);
+            psFxrMerge($mTaxable, $mixTaxable);
+            psFxrMerge($mTax, $mixTax);
         } elseif ($class === PS_TAX_CLASS_ZERO_RATED) {
-            $totZero = psReportingMoneyAdd($totZero, $zero);
+            psFxrMerge($mZero, $mixZero);
         } elseif ($class === PS_TAX_CLASS_EXEMPT) {
-            $totExempt = psReportingMoneyAdd($totExempt, $exempt);
+            psFxrMerge($mExempt, $mixExempt);
         }
     }
-    mysqli_stmt_close($stmt);
 
-    // PROCESSED refund tax adjustments only (from stored snapshots).
-    $refundTax = psTaxReportingRefundTaxTotal($conn, $f);
-    $netTax = psReportingMoneySub($totTax, $refundTax);
+    // PROCESSED refund tax adjustments only (from stored snapshots), in the original sale currency.
+    $mRefund = psTaxReportingRefundTaxMix($conn, $f, $ctx);
+    $mNet = $mTax;
+    psFxrMerge($mNet, psFxrNegate($mRefund));
 
     return [
         'ok' => true,
         'rows' => $rows,
         'totals' => [
-            'taxable_base' => $totTaxable,
-            'tax_collected' => $totTax,
-            'zero_rated_base' => $totZero,
-            'exempt_turnover' => $totExempt,
-            'refund_tax' => $refundTax,
-            'net_tax' => $netTax,
+            'taxable_base' => psFxrMoney(psFxrBase($mTaxable)),
+            'tax_collected' => psFxrMoney(psFxrBase($mTax)),
+            'zero_rated_base' => psFxrMoney(psFxrBase($mZero)),
+            'exempt_turnover' => psFxrMoney(psFxrBase($mExempt)),
+            'refund_tax' => psFxrMoney(psFxrBase($mRefund)),
+            'net_tax' => psFxrMoney(psFxrBase($mNet)),
+            'fx_taxable' => $mTaxable,
+            'fx_tax' => $mTax,
+            'fx_zero' => $mZero,
+            'fx_exempt' => $mExempt,
+            'fx_refund' => $mRefund,
+            'fx_net' => $mNet,
         ],
         'legacy_count' => $legacyCount,
         'unconfigured_count' => $unconfCount,
-        'note' => 'Supported COMPLETE tax lines only. Not a statutory return. PENDING/APPROVED/REJECTED refunds excluded.',
+        'note' => 'Supported COMPLETE tax lines only. Not a statutory return. PENDING/APPROVED/REJECTED refunds excluded. Each line is in its sale currency; consolidated amounts use each sale\'s stored rate. VAT returns in a single currency should use the consolidated figures or file per currency as ZIMRA requires.',
         'filters' => $f,
+        'fx' => $ctx,
     ];
+}
+
+/** Processed refund tax per currency (original sale currency; base at the original sale's stored rate). */
+function psTaxReportingRefundTaxMix(mysqli $conn, array $f, array $ctx): array
+{
+    $where = "rr.status = 'PROCESSED' AND rr.processed_tax_amount IS NOT NULL";
+    $types = '';
+    $params = [];
+    if ($f['from_date'] !== null && $f['from_date'] !== '') {
+        $where .= ' AND DATE(rr.processed_at) >= ?';
+        $types .= 's';
+        $params[] = $f['from_date'];
+    }
+    if ($f['to_date'] !== null && $f['to_date'] !== '') {
+        $where .= ' AND DATE(rr.processed_at) <= ?';
+        $types .= 's';
+        $params[] = $f['to_date'];
+    }
+    [$where, $types, $params] = psReportingAppendBranchFilter(
+        $where, $types, $params, $f['branches'], !empty($f['all_branches']), 'rr.branch'
+    );
+    $cur = psFxHasColumn($conn, 'sale_refund_requests', 'currency') ? 'COALESCE(rr.currency, sr.currency)' : 'sr.currency';
+    $where .= psFxrCurFilterSql($conn, $ctx, $cur);
+    $g = psFxrGrouped($conn, $ctx, 'SELECT ' . psFxrAggSelectSql($conn, $ctx, $cur, 'CAST(rr.processed_tax_amount AS DECIMAL(14,2))', null, 'sr.fx_rate') . "
+            FROM sale_refund_requests rr LEFT JOIN online_sales_ref sr ON sr.invoice_number = rr.invoice_number
+            WHERE {$where} GROUP BY {$cur}", $types, $params, 0);
+    return $g['total']['mix'] ?? [];
 }
 
 function psTaxReportingRefundTaxTotal(mysqli $conn, array $f): string
@@ -326,6 +355,8 @@ function psTaxReportingDrilldown(mysqli $conn, array $raw): array
         $types .= 's';
         $params[] = $f['classification'];
     }
+    require_once __DIR__ . '/fx_report.php';
+    $where .= psFxrCurFilterSql($conn, psFxrContext($conn, $raw), 'r.currency');
     $countSql = "SELECT COUNT(*) AS c FROM online_sales s
                  INNER JOIN online_sales_ref r ON r.invoice_number = s.invoice_number
                  WHERE {$where}";
@@ -351,7 +382,7 @@ function psTaxReportingDrilldown(mysqli $conn, array $raw): array
     $sql = "SELECT s.id, s.invoice_number, s.product_id, s.product, s.quantity, s.branch,
                    s.tax_code, s.tax_classification, s.tax_rate_percent, s.tax_pricing_mode,
                    s.taxable_amount, s.tax_amount, s.line_total_excl, s.line_total_incl, s.revenue,
-                   r.date_, r.sold_at
+                   r.date_, r.sold_at, r.currency AS fx_currency, r.fx_rate, r.fx_rate_ids
             FROM online_sales s
             INNER JOIN online_sales_ref r ON r.invoice_number = s.invoice_number
             WHERE {$where}
@@ -389,6 +420,9 @@ function psTaxReportingDrilldown(mysqli $conn, array $raw): array
             'tax_amount' => psReportingMoneyFormat($row['tax_amount']),
             'line_total_incl' => psReportingMoneyFormat($row['line_total_incl'] ?? $row['revenue']),
             'date' => (string)($row['sold_at'] ?? $row['date_'] ?? ''),
+            'fx_currency' => $row['fx_currency'],
+            'fx_rate' => (string)($row['fx_rate'] ?? ''),
+            'fx_rate_ids' => (string)($row['fx_rate_ids'] ?? ''),
         ];
     }
     mysqli_stmt_close($stmt);
@@ -413,25 +447,39 @@ function psTaxReportingExportCsv(mysqli $conn, string $kind, array $raw): array
         if (!$rep['ok']) {
             return $rep;
         }
+        $ctx = $rep['fx'];
         $headers = [
-            'Tax code', 'Classification', 'Rate %', 'Pricing mode', 'Line count',
-            'Taxable / class base', 'Tax collected', 'Zero-rated base', 'Exempt turnover',
+            'Tax code', 'Classification', 'Rate %', 'Pricing mode', 'Currency', 'Line count',
+            'Taxable / class base (original)', 'Tax collected (original)',
+            'Reporting currency', 'Taxable / class base (' . $ctx['base'] . ')', 'Tax collected (' . $ctx['base'] . ')', 'Currency status',
         ];
         $lines = [];
+        $cur = static function (array $mix, string $code): array {
+            return $mix[$code] ?? ['txn' => 0, 'base' => 0, 'n' => 0, 'missing_n' => 0, 'legacy_n' => 0];
+        };
         foreach ($rep['rows'] as $row) {
-            $lines[] = [
-                $row['tax_code'], $row['classification'], $row['rate_percent'], $row['pricing_mode'],
-                $row['line_count'], $row['taxable_base'], $row['tax_collected'],
-                $row['zero_rated_base'], $row['exempt_turnover'],
-            ];
+            $codes = array_unique(array_merge(array_keys($row['fx_base']), array_keys($row['fx_tax'])));
+            foreach ($codes as $code) {
+                $b = $cur($row['fx_base'], $code);
+                $t = $cur($row['fx_tax'], $code);
+                $status = $code === $ctx['base'] ? 'Base currency' : (($b['missing_n'] ?? 0) > 0 ? 'No stored rate on some lines - left out of the base total' : 'Converted at each sale\'s stored rate');
+                $lines[] = [
+                    $row['tax_code'], $row['classification'], $row['rate_percent'], $row['pricing_mode'], $code, max($b['n'], $t['n']),
+                    psFxrMoney($b['txn']), psFxrMoney($t['txn']), $ctx['base'], psFxrMoney($b['base']), psFxrMoney($t['base']), $status,
+                ];
+            }
         }
         $t = $rep['totals'];
-        $lines[] = ['TOTALS', '', '', '', '', $t['taxable_base'], $t['tax_collected'], $t['zero_rated_base'], $t['exempt_turnover']];
-        $lines[] = ['Refund tax (PROCESSED)', '', '', '', '', '', $t['refund_tax'], '', ''];
-        $lines[] = ['Net tax', '', '', '', '', '', $t['net_tax'], '', ''];
-        $lines[] = ['Legacy incomplete headers', (string)$rep['legacy_count'], '', '', '', '', '', '', ''];
-        $lines[] = ['Unconfigured/mixed headers', (string)$rep['unconfigured_count'], '', '', '', '', '', '', ''];
-        $lines[] = ['NOTE', $rep['note'] ?? '', '', '', '', '', '', '', ''];
+        foreach (['Taxable base' => 'fx_taxable', 'Tax collected' => 'fx_tax', 'Zero-rated base' => 'fx_zero', 'Exempt turnover' => 'fx_exempt', 'Refund tax (PROCESSED)' => 'fx_refund', 'Net tax' => 'fx_net'] as $label => $key) {
+            foreach (psFxrCsvAggRows($ctx, $t[$key] ?? []) as $r) {
+                // [Currency, Transactions, Total original, Reporting, Total base, Status]
+                $lines[] = ['TOTAL ' . $label, '', '', '', $r[0], $r[1], $r[2], '', $r[3], $r[4], '', $r[5]];
+            }
+            $lines[] = ['TOTAL ' . $label . ' (consolidated)', '', '', '', '', '', '', '', $ctx['base'], psFxrMoney(psFxrBase($t[$key] ?? [])), '', psFxrIncomplete($t[$key] ?? []) ? 'Incomplete: rate missing' : 'Each sale at its stored rate'];
+        }
+        $lines[] = ['Legacy incomplete headers', (string)$rep['legacy_count'], '', '', '', '', '', '', '', '', '', ''];
+        $lines[] = ['Unconfigured/mixed headers', (string)$rep['unconfigured_count'], '', '', '', '', '', '', '', '', '', ''];
+        $lines[] = ['NOTE', $rep['note'] ?? '', '', '', '', '', '', '', '', '', '', ''];
         return [
             'ok' => true,
             'headers' => $headers,
@@ -448,14 +496,15 @@ function psTaxReportingExportCsv(mysqli $conn, string $kind, array $raw): array
         }
         $headers = [
             'Invoice', 'Date', 'Branch', 'Product ID', 'Product', 'Qty', 'Tax code',
-            'Classification', 'Rate %', 'Mode', 'Taxable', 'Tax', 'Total incl',
+            'Classification', 'Rate %', 'Mode', 'Currency', 'Taxable', 'Tax', 'Total incl', 'Exchange rate (stored)',
         ];
         $lines = [];
         foreach ($rep['rows'] as $row) {
             $lines[] = [
                 $row['invoice_number'], $row['date'], $row['branch'], $row['product_id'], $row['product'],
                 $row['quantity'], $row['tax_code'], $row['classification'], $row['rate_percent'],
-                $row['pricing_mode'], $row['taxable_amount'], $row['tax_amount'], $row['line_total_incl'],
+                $row['pricing_mode'], psFxNormalizeCode($row['fx_currency'] ?? '') ?: (psFxLegacyCurrency() . ' (legacy)'),
+                $row['taxable_amount'], $row['tax_amount'], $row['line_total_incl'], psFxrRateText((string)($row['fx_rate'] ?? '')),
             ];
         }
         return [

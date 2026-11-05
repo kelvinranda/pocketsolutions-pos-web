@@ -33,7 +33,10 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+// 2026-10-21: every amount in its drawer's own currency (the session detail is a transaction record).
+require_once __DIR__ . '/includes/fx_report.php';
+$fxBase = psFxBase($conn, psFxSessionCompany());
+$C = static fn($v, $cur = null): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, psFxNormalizeCode($cur ?? '') ?: $fxBase), ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -84,13 +87,13 @@ mysqli_close($conn);
         </p>
         <?php if ($status === 'CLOSED'): ?>
             <table>
-                <thead><tr><th>Float</th><th>Expected (snapshot)</th><th>Actual</th><th>Variance</th><th>Status</th><th>Final recon</th><th>Notes</th></tr></thead>
+                <thead><tr><th>Float</th><th>Expected (snapshot, <?php echo htmlspecialchars($fxBase); ?> drawer)</th><th>Actual</th><th>Variance</th><th>Status</th><th>Final recon</th><th>Notes</th></tr></thead>
                 <tbody>
                     <tr>
-                        <td><?php echo htmlspecialchars((string)($s['opening_float'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($s['expected_cash'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($s['actual_cash'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($s['variance'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo $C($s['opening_float'] ?? 0); ?></td>
+                        <td><?php echo $C($s['expected_cash'] ?? 0); ?></td>
+                        <td><?php echo $C($s['actual_cash'] ?? 0); ?></td>
+                        <td><?php echo $C($s['variance'] ?? 0); ?></td>
                         <td><?php echo htmlspecialchars(psCashReconciliationStatusLabel((string)($s['reconciliation_status'] ?? '')), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo (int)($s['final_reconciliation_id'] ?? 0); ?></td>
                         <td><?php echo htmlspecialchars((string)($s['closure_notes'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
@@ -100,30 +103,35 @@ mysqli_close($conn);
         <?php endif; ?>
 
         <?php if ($live && !empty($live['ok'])): ?>
-            <?php $d = $live['detail'] ?? []; ?>
             <table>
-                <thead><tr><th>Opening</th><th>Sales</th><th>In</th><th>Refunds</th><th>Out</th><th>Ledger expected</th><th>Currency</th></tr></thead>
+                <thead><tr><th>Drawer</th><th>Opening</th><th>Sales</th><th>In</th><th>Refunds</th><th>Out</th><th>Ledger expected</th><th>Count up to date?</th></tr></thead>
                 <tbody>
+                <?php foreach (($detail['drawers'] ?? [$fxBase => $live]) as $dCode => $dBal): $d = $dBal['detail'] ?? []; ?>
                     <tr>
-                        <td><?php echo htmlspecialchars((string)($d['opening_float'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($d['cash_sales'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($d['cash_in'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($d['cash_refunds'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)($d['cash_out'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$live['balance'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="<?php echo !empty($cls['stale']) ? 'stale' : ''; ?>">
+                        <td><strong><?php echo htmlspecialchars((string)$dCode, ENT_QUOTES, 'UTF-8'); ?></strong></td>
+                        <td><?php echo $C($d['opening_float'] ?? 0, $dCode); ?></td>
+                        <td><?php echo $C($d['cash_sales'] ?? 0, $dCode); ?></td>
+                        <td><?php echo $C($d['cash_in'] ?? 0, $dCode); ?></td>
+                        <td><?php echo $C($d['cash_refunds'] ?? 0, $dCode); ?></td>
+                        <td><?php echo $C($d['cash_out'] ?? 0, $dCode); ?></td>
+                        <td><?php echo $C($dBal['balance'] ?? 0, $dCode); ?></td>
+                        <td class="<?php echo $dCode === $fxBase && !empty($cls['stale']) ? 'stale' : ''; ?>">
+                            <?php if ($dCode === $fxBase): ?>
                             <?php echo htmlspecialchars(psCashReportingStatusLabel((string)($cls['currency'] ?? '')), ENT_QUOTES, 'UTF-8'); ?>
                             <?php if (!empty($cls['variance_status'])): ?>
                                 / <?php echo htmlspecialchars(psCashReconciliationStatusLabel((string)$cls['variance_status']), ENT_QUOTES, 'UTF-8'); ?>
                             <?php endif; ?>
+                            <?php else: ?>see Reconciliations<?php endif; ?>
                         </td>
                     </tr>
+                <?php endforeach; ?>
                 </tbody>
             </table>
+            <p class="fxr-label">One drawer per currency. Drawers are never added together: each is counted on its own.</p>
             <?php if (!empty($cls['stale'])): ?>
                 <p class="stale">
-                    Stale: last recon expected <?php echo htmlspecialchars((string)$cls['recon_expected'], ENT_QUOTES, 'UTF-8'); ?>
-                    vs live <?php echo htmlspecialchars((string)$cls['ledger_expected'], ENT_QUOTES, 'UTF-8'); ?>.
+                    Stale: last recon expected <?php echo $C($cls['recon_expected']); ?>
+                    vs live <?php echo $C($cls['ledger_expected']); ?>.
                     <a href="cash_reconciliation.php">Reconcile</a>
                 </p>
             <?php endif; ?>
@@ -142,7 +150,7 @@ mysqli_close($conn);
                     <td><?php echo htmlspecialchars((string)$row['movement_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['type_label'] ?? $row['movement_type']), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['direction'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $C($row['amount'], $row['currency'] ?? null); ?><?php if (!array_key_exists('currency', $row) || $row['currency'] === null): ?> <span class="fxa-tag" title="Recorded before drawer currencies">legacy</span><?php endif; ?></td>
                     <td><?php echo htmlspecialchars((string)($row['reference_display'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['reason_label'] ?? $row['reason'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['description'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
@@ -155,17 +163,18 @@ mysqli_close($conn);
         <h2>Reconciliations</h2>
         <table>
             <thead>
-                <tr><th>Date</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th><th>Notes</th><th>By</th></tr>
+                <tr><th>Date</th><th>Drawer</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th><th>Notes</th><th>By</th></tr>
             </thead>
             <tbody>
             <?php if (empty($detail['reconciliations'])): ?>
-                <tr><td colspan="7">No reconciliations.</td></tr>
+                <tr><td colspan="8">No reconciliations.</td></tr>
             <?php else: foreach ($detail['reconciliations'] as $row): ?>
                 <tr>
                     <td><?php echo htmlspecialchars((string)$row['reconciled_at'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['counted_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                    <td><?php echo htmlspecialchars((string)$row['variance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo htmlspecialchars(psFxNormalizeCode($row['currency'] ?? '') ?: $fxBase, ENT_QUOTES, 'UTF-8'); ?></td>
+                    <td><?php echo $C($row['expected_cash'], $row['currency'] ?? null); ?></td>
+                    <td><?php echo $C($row['counted_cash'], $row['currency'] ?? null); ?></td>
+                    <td><?php echo $C($row['variance'], $row['currency'] ?? null); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['status_label'] ?? $row['status']), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['notes'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                     <td><?php echo htmlspecialchars((string)($row['reconciled_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
@@ -231,6 +240,6 @@ mysqli_close($conn);
             </tbody>
         </table>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

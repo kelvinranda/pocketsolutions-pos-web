@@ -7,6 +7,9 @@
  * matches "Reorder Level". The older goods.re_order_level column is never written.
  * Status: new rows ACTIVE; existing status is never changed by import.
  * Stock: goods.quantity is never written.
+ * 2026-11-02: optional "Opening Stock" column — for NEW items only it becomes the opening stock balance (stock ledger
+ * OPENING_BALANCE). For items that already exist it is ignored and listed in the result (use a stock take instead),
+ * so importing the same file twice never doubles stock.
  */
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
@@ -147,6 +150,8 @@ function psImportEmptyStats(): array
         'skipped' => 0,
         'rejected' => 0,
         'validation_errors' => 0,
+        'opening_set' => 0,
+        'opening_ignored' => [],
     ];
 }
 
@@ -165,6 +170,7 @@ function psImportProductsFromRows(array $rows): array
 {
     $columns = psImportHeaderColumns($rows);
     $reorderLetter = $columns['reorder level'] ?? null;
+    $openingLetter = $columns['opening stock'] ?? ($columns['opening qty'] ?? ($columns['opening quantity'] ?? ($columns['opening balance'] ?? null)));
     $products = [];
     $stats = psImportEmptyStats();
     foreach ($rows as $row) {
@@ -217,6 +223,7 @@ function psImportProductsFromRows(array $rows): array
             'barcode' => $barcodeValue,
             'reorder_apply' => $reorderLetter !== null,
             'reorder_level' => null,
+            'opening' => $openingLetter !== null ? trim(psImportCell($row, $openingLetter)) : '',
         ];
         if ($product['product'] === '' && $product['price'] === '' && $product['cost_price'] === '' && $productId === ''
             && ($product['category'] === null || $product['category'] === '')
@@ -435,6 +442,17 @@ function psImportReportResult(array $stats): void
         $parts[] = (int)$stats['validation_errors'] . ' validation error(s)';
     }
     $summary = $parts ? implode(', ', $parts) : 'no rows processed';
+    // 2026-11-02: opening stock notes.
+    $openingSet = (int)($GLOBALS['ps_import_opening_set'] ?? 0);
+    if ($openingSet > 0) {
+        echo "<div class='success'>Opening stock was set for " . $openingSet . ' new item' . ($openingSet === 1 ? '' : 's') . '.</div>';
+    }
+    $ignored = array_values(array_unique((array)($stats['opening_ignored'] ?? [])));
+    if ($ignored) {
+        echo "<div class='error'>Opening Stock was not applied to " . count($ignored) . ' item' . (count($ignored) === 1 ? '' : 's')
+            . ' that already exist (' . htmlspecialchars(implode(', ', array_slice($ignored, 0, 20)) . (count($ignored) > 20 ? ' …' : ''), ENT_QUOTES, 'UTF-8')
+            . '). Their stock is unchanged — use a stock take to correct it.</div>';
+    }
     if ($ok > 0 && $bad === 0) {
         echo "<div class='success'>Import complete: " . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . ".</div>";
         return;
@@ -565,6 +583,9 @@ function importProducts($conn, $products, string $branch, array $stats = null): 
         }
 
         if (count($ids) === 1) {
+            if (($product['opening'] ?? '') !== '') {
+                $stats['opening_ignored'][] = $productId; // existing item: never adds stock again
+            }
             $result = psImportUpdateProduct($conn, $ids[0], $product, $branch);
             if ($result === 'updated') {
                 $stats['updated']++;
@@ -770,6 +791,17 @@ function psImportInsertProduct(mysqli $conn, array $product, string $branch): st
         psImportEchoError((string)$costCheck['error'] . ' ' . ($autoId ? 'This row' : $productId) . ' was not imported.');
         return 'validation';
     }
+    // 2026-11-02: opening stock for the new item (blank = 0). Whole or decimal quantity, not negative.
+    $openingRaw = trim((string)($product['opening'] ?? ''));
+    $opening = '0';
+    if ($openingRaw !== '') {
+        $openingDec = psStockDecimal($openingRaw);
+        if ($openingDec === null || psStockDecimalCmp($openingDec, '0') < 0) {
+            psImportEchoError('Opening Stock must be a number of 0 or more. ' . ($autoId ? 'This row' : $productId) . ' was not imported.');
+            return 'validation';
+        }
+        $opening = $openingDec;
+    }
     if (function_exists('psEnsureGoodsStatus')) {
         psEnsureGoodsStatus($conn);
     }
@@ -897,11 +929,14 @@ function psImportInsertProduct(mysqli $conn, array $product, string $branch): st
     if (!function_exists('psStockOpenNewProduct')) {
         require_once __DIR__ . '/stock_movement.php';
     }
-    $tracked = $audited && psStockOpenNewProduct($conn, (string)$productId, (string)$branch, null, trim((string)($_SESSION['logger'] ?? '')));
+    $tracked = $audited && psStockOpenNewProduct($conn, (string)$productId, (string)$branch, null, trim((string)($_SESSION['logger'] ?? '')), $opening);
     if (!$tracked || !psProductAuditCommit($conn, $owns)) {
         psProductAuditRollback($conn, $owns);
         psImportEchoError($productId . ' was not imported.');
         return 'rejected';
+    }
+    if (psStockDecimalCmp($opening, '0') > 0) {
+        $GLOBALS['ps_import_opening_set'] = (int)($GLOBALS['ps_import_opening_set'] ?? 0) + 1;
     }
     return 'inserted';
 }

@@ -4,6 +4,7 @@ require 'pockets_config.php';
 require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/customer_master.php';
 require_once __DIR__ . '/includes/customer_account.php';
+require_once __DIR__ . '/includes/loyalty.php';
 
 $conn = mysqli_connect($servername, $username, $password, $dbname);
 if (!$conn) {
@@ -22,6 +23,11 @@ $row = null;
 $salesHistory = null;
 $auditRows = [];
 $accountSummary = ['ok' => true, 'has_account' => false, 'account' => null, 'balance' => '0.00'];
+$loyaltyCfg = psLoyaltyDefaults();
+$loyaltyBalance = 0;
+$loyaltyRows = [];
+$loyaltyMore = false;
+$loyaltyPage = 1;
 
 if (!empty($_GET['created'])) {
     $notice = 'Customer created.';
@@ -87,10 +93,36 @@ if (!$signedIn) {
         $error = (string)($result['error'] ?? 'The customer could not be saved.');
     }
 
+    // 2026-10-24: loyalty points — admin adjustment with a reason (ledger entry, never an edited balance).
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['loyalty_adjust'])) {
+        if (!psCsrfValidate()) {
+            $error = 'Invalid security token. Reload and try again.';
+        } elseif (psCustomerById($conn, $customerId) === null) {
+            $error = 'Customer was not found.';
+        } else {
+            $adj = psLoyaltyAdjust($conn, $customerId, $_POST['loyalty_points'] ?? '', (string)($_POST['loyalty_reason'] ?? ''), (string)($_SESSION['logger'] ?? ''));
+            if (!empty($adj['ok'])) {
+                header('Location: customer_view.php?id=' . $customerId . '&loyalty=1#loyalty');
+                exit;
+            }
+            $error = (string)$adj['error'];
+        }
+    }
+    if (!empty($_GET['loyalty'])) {
+        $notice = 'Loyalty points adjusted.';
+    }
+
     $row = psCustomerById($conn, $customerId);
     if (!$row) {
         $error = 'Customer was not found.';
     } else {
+        psLoyaltyApplyExpiry($conn, $customerId);
+        $loyaltyCfg = psLoyaltyConfig($conn);
+        $loyaltyBalance = psLoyaltyBalance($conn, $customerId);
+        $loyaltyPage = max(1, (int)($_GET['loyalty_page'] ?? 1));
+        $loyaltyRows = psLoyaltyHistory($conn, $customerId, 26, ($loyaltyPage - 1) * 25);
+        $loyaltyMore = count($loyaltyRows) > 25;
+        $loyaltyRows = array_slice($loyaltyRows, 0, 25);
         $salesHistory = psCustomerSalesHistory($conn, $customerId, [
             'preset' => $histPreset,
             'from_date' => $histFrom,
@@ -319,6 +351,60 @@ function psCustomerViewHistQuery(int $id, array $overrides = []): string
                             <span class="hint">Activate this customer before creating an account.</span>
                         <?php endif; ?>
                     </div>
+                <?php endif; ?>
+            </section>
+
+            <section class="section" id="loyalty">
+                <h2>Loyalty points</h2>
+                <p class="hint">Balance is the sum of the entries below (earned, used, taken back for refunds, expired and adjusted).
+                    <?php echo !empty($loyaltyCfg['enabled']) ? '' : 'The loyalty programme is switched off: no points are earned or used.'; ?></p>
+                <dl class="detail-grid">
+                    <dt>Balance</dt>
+                    <dd><strong><?php echo (int)$loyaltyBalance; ?></strong> points</dd>
+                </dl>
+                <?php if ($loyaltyRows): ?>
+                    <div class="ps-table-wrap">
+                    <table>
+                        <thead><tr><th>When</th><th>Entry</th><th class="num">Points</th><th>Reference</th><th>Branch</th><th>Reason</th><th>By</th><th>Expires</th></tr></thead>
+                        <tbody>
+                        <?php foreach ($loyaltyRows as $lr): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars((string)$lr['created_at'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars(psLoyaltyEntryLabel((string)$lr['entry_type']), ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td class="num"><?php echo ((int)$lr['points'] > 0 ? '+' : '') . (int)$lr['points']; ?></td>
+                                <td><?php
+                                    $refType = (string)$lr['reference_type'];
+                                    $refId = (string)$lr['reference_id'];
+                                    echo $refType === 'SALE'
+                                        ? 'Invoice ' . htmlspecialchars($refId, ENT_QUOTES, 'UTF-8')
+                                        : htmlspecialchars($refType === 'REFUND' ? $refId : ($refType === 'ADJUSTMENT' ? 'Adjustment' : 'Expiry'), ENT_QUOTES, 'UTF-8');
+                                ?></td>
+                                <td><?php echo htmlspecialchars((string)$lr['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars((string)$lr['reason'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars((string)$lr['created_by'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo htmlspecialchars((string)($lr['expires_on'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    </div>
+                    <div class="customer-actions">
+                        <?php if ($loyaltyPage > 1): ?><a href="customer_view.php?id=<?php echo $id; ?>&amp;loyalty_page=<?php echo $loyaltyPage - 1; ?>#loyalty">Newer</a><?php endif; ?>
+                        <?php if ($loyaltyMore): ?><a href="customer_view.php?id=<?php echo $id; ?>&amp;loyalty_page=<?php echo $loyaltyPage + 1; ?>#loyalty">Older</a><?php endif; ?>
+                    </div>
+                <?php else: ?>
+                    <p class="hint">No loyalty entries yet.</p>
+                <?php endif; ?>
+                <?php if (strtolower(trim((string)($_SESSION['level'] ?? ''))) === 'admin'): ?>
+                    <form method="post" action="customer_view.php?id=<?php echo $id; ?>" class="ps-form-stack" style="max-width:520px;margin-top:10px">
+                        <?php echo psCsrfField(); ?>
+                        <input type="hidden" name="customer_id" value="<?php echo $id; ?>">
+                        <label class="ps-label" for="loyalty_points">Adjust points (use a minus sign to remove)</label>
+                        <input class="ps-input" id="loyalty_points" name="loyalty_points" inputmode="numeric" maxlength="10" required>
+                        <label class="ps-label" for="loyalty_reason">Reason (required)</label>
+                        <input class="ps-input" id="loyalty_reason" name="loyalty_reason" maxlength="250" required>
+                        <div class="ps-form-actions"><button type="submit" class="ps-btn ps-btn-outline" name="loyalty_adjust" value="1">Record adjustment</button></div>
+                    </form>
                 <?php endif; ?>
             </section>
 

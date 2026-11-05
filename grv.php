@@ -2,6 +2,7 @@
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/stock_movement.php';
+require_once __DIR__ . '/includes/product_packs.php';
 require_once __DIR__ . '/includes/goods_receipt.php';
 
 ini_set('display_errors', '0');
@@ -58,7 +59,7 @@ if (!$signedIn) {
                     $poHeader = null;
                     $poLines = [];
                 } else {
-                    $sup = psSupplierById($conn, (int)$poHeader['supplier_id']);
+                    $sup = psSupplierByIdForDocument($conn, (int)$poHeader['supplier_id']);
                     if ($sup) {
                         $poSupplierLabel = trim((string)$sup['supplier_code'] . ' — ' . (string)$sup['supplier_name']);
                     }
@@ -139,7 +140,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm']) && $signed
         $error = 'This receipt was already submitted or the form expired. Reload and try again.';
     } else {
         $postMode = strtolower(trim((string)($_POST['mode'] ?? 'non_po')));
+        // 2026-10-28 packs: quantities (and, without a PO, costs) entered per pack become base units before saving.
+        $packCompany = trim((string)($_SESSION['the_company'] ?? ''));
+        $packErr = null;
         if ($postMode === 'po') {
+            $rq = (array)($_POST['receive_qty'] ?? []);
+            $pids = [];
+            foreach ((array)($_POST['po_line_id'] ?? []) as $k => $lid) {
+                $st = mysqli_prepare($conn, 'SELECT product_id FROM purchase_order_lines WHERE id = ? LIMIT 1');
+                $lidI = (int)$lid;
+                mysqli_stmt_bind_param($st, 'i', $lidI);
+                mysqli_stmt_execute($st);
+                $rr = mysqli_stmt_get_result($st);
+                $pids[$k] = ($rr && ($x = mysqli_fetch_row($rr))) ? (string)$x[0] : '';
+                mysqli_stmt_close($st);
+            }
+            $cv = psPackConvertRows($conn, $packCompany, $pids, $rq, (array)($_POST['receive_unit'] ?? []));
+            if (empty($cv['ok'])) {
+                $packErr = $cv['error'];
+            } else {
+                $_POST['receive_qty'] = $cv['qtys'];
+            }
+        } else {
+            $cv = psPackConvertRows($conn, $packCompany, (array)($_POST['product_id'] ?? []), (array)($_POST['quantity'] ?? []), (array)($_POST['unit'] ?? []), (array)($_POST['line_cost'] ?? []));
+            if (empty($cv['ok'])) {
+                $packErr = $cv['error'];
+            } else {
+                $_POST['quantity'] = $cv['qtys'];
+                $_POST['line_cost'] = $cv['costs'] ?: ($_POST['line_cost'] ?? []);
+            }
+        }
+        if ($packErr !== null) {
+            $saved = ['ok' => false, 'error' => $packErr];
+        } elseif ($postMode === 'po') {
             $saved = psSaveGoodsReceipt($conn, [
                 'date' => $_POST['date'] ?? '',
                 'invoice_number' => $_POST['invoice_number'] ?? '',
@@ -196,7 +229,7 @@ if ($signedIn && $branch !== '' && $error === '') {
 require_once __DIR__ . '/includes/currency.php';
 $grvCurrencies = ($signedIn && $branch !== '') ? psFxCompanyCurrencies($conn, psFxSessionCompany()) : [];
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -247,6 +280,8 @@ mysqli_close($conn);
             document.getElementById('product_' + index).value = product;
             document.getElementById('line_cost_' + index).value = cost_price;
             document.getElementById('suggestions_' + index).style.display = 'none';
+            const unitSel = document.getElementById('unit_' + index);
+            if (unitSel && typeof psPackFill === 'function') psPackFill(unitSel, product_id);
         }
 
         function addProductRow() {
@@ -256,8 +291,9 @@ mysqli_close($conn);
                 + '<input type="hidden" id="product_id_' + productCount + '" name="product_id[]" required>'
                 + '<div id="suggestions_' + productCount + '" class="suggestions" style="display:none"></div>'
                 + '</td>'
-                + '<td><input type="number" step="0.001" name="quantity[]" placeholder="Quantity" required></td>'
-                + '<td><input type="number" step="0.01" id="line_cost_' + productCount + '" name="line_cost[]" placeholder="Line Cost" required></td>'
+                + '<td><input type="number" step="0.001" name="quantity[]" placeholder="Quantity" required>'
+                + ' <select id="unit_' + productCount + '" name="unit[]" aria-label="Unit" hidden><option value="base"></option></select></td>'
+                + '<td><input type="number" step="0.01" id="line_cost_' + productCount + '" name="line_cost[]" placeholder="Cost per unit" title="Cost per selected unit (per pack when a pack is chosen)" required></td>'
                 + '<td><input type="number" step="0.01" name="vat[]" placeholder="VAT" value="0" required></td>'
                 + '<td><button type="button" class="delete-row" onclick="deleteProductRow(this)">Delete</button></td></tr>';
             document.getElementById('productTable').insertAdjacentHTML('beforeend', productRow);
@@ -277,7 +313,7 @@ mysqli_close($conn);
         }
 
         function previewNonPo() {
-            const products = [], productIds = [], quantities = [], lineCosts = [], vats = [];
+            const products = [], productIds = [], quantities = [], lineCosts = [], vats = [], units = [], unitLabels = [];
             let grandTotal = 0;
             document.querySelectorAll('#productTable tbody tr').forEach(function (row) {
                 const productName = row.querySelector('input[name="product[]"]').value;
@@ -285,6 +321,9 @@ mysqli_close($conn);
                 const quantity = parseFloat(row.querySelector('input[name="quantity[]"]').value);
                 const lineCost = parseFloat(row.querySelector('input[name="line_cost[]"]').value);
                 const vat = parseFloat(row.querySelector('input[name="vat[]"]').value);
+                const unitSel = row.querySelector('select[name="unit[]"]');
+                units.push(unitSel && !unitSel.hidden ? unitSel.value : 'base');
+                unitLabels.push(unitSel && !unitSel.hidden && unitSel.selectedIndex >= 0 ? unitSel.options[unitSel.selectedIndex].text : '');
                 products.push(productName);
                 productIds.push(productIdInput ? productIdInput.value : '');
                 quantities.push(quantity);
@@ -301,7 +340,7 @@ mysqli_close($conn);
             const token = document.querySelector('input[name="grv_submit_token"]').value;
             let html = '<h2>Preview Goods Received Note</h2><table class="grv-table"><tr><th>Product</th><th>Qty</th><th>Cost</th><th>VAT</th></tr>';
             for (let i = 0; i < products.length; i++) {
-                html += '<tr><td>' + psAttr(products[i]) + '</td><td>' + psAttr(quantities[i]) + '</td><td>'
+                html += '<tr><td>' + psAttr(products[i]) + '</td><td>' + psAttr(quantities[i]) + (unitLabels[i] ? ' ' + psAttr(unitLabels[i]) : '') + '</td><td>'
                     + psAttr(lineCosts[i].toFixed(2)) + '</td><td>' + psAttr(vats[i].toFixed(2)) + '</td></tr>';
             }
             html += '</table><p>Date: ' + psAttr(date) + '</p><p>Supplier invoice: ' + psAttr(invoiceNumber)
@@ -314,6 +353,7 @@ mysqli_close($conn);
                 fields += '<input type="hidden" name="quantity[]" value="' + psAttr(quantities[i]) + '">';
                 fields += '<input type="hidden" name="line_cost[]" value="' + psAttr(lineCosts[i]) + '">';
                 fields += '<input type="hidden" name="vat[]" value="' + psAttr(vats[i]) + '">';
+                fields += '<input type="hidden" name="unit[]" value="' + psAttr(units[i]) + '">';
             }
             html += '<form method="POST" action="">'
                 + <?php echo json_encode(function_exists('psCsrfField') ? psCsrfField() : ''); ?>
@@ -330,7 +370,7 @@ mysqli_close($conn);
         }
 
         function previewPo() {
-            const lineIds = [], qtys = [];
+            const lineIds = [], qtys = [], units = [];
             document.querySelectorAll('.po-receive-row').forEach(function (row) {
                 const id = row.getAttribute('data-line-id');
                 const qtyInput = row.querySelector('input[name="receive_qty[]"]');
@@ -338,6 +378,8 @@ mysqli_close($conn);
                 if (qty !== '' && parseFloat(qty) > 0) {
                     lineIds.push(id);
                     qtys.push(qty);
+                    const us = row.querySelector('select[name="receive_unit[]"]');
+                    units.push(us && !us.hidden ? us.value : 'base');
                 }
             });
             if (lineIds.length === 0) {
@@ -358,6 +400,7 @@ mysqli_close($conn);
             for (let i = 0; i < lineIds.length; i++) {
                 fields += '<input type="hidden" name="po_line_id[]" value="' + psAttr(lineIds[i]) + '">';
                 fields += '<input type="hidden" name="receive_qty[]" value="' + psAttr(qtys[i]) + '">';
+                fields += '<input type="hidden" name="receive_unit[]" value="' + psAttr(units[i]) + '">';
             }
             html += '<form method="POST" action="">'
                 + <?php echo json_encode(function_exists('psCsrfField') ? psCsrfField() : ''); ?>
@@ -393,7 +436,15 @@ mysqli_close($conn);
             <div class="error"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div>
         <?php endif; ?>
         <?php if ($notice !== ''): ?>
-            <div class="notice"><?php echo htmlspecialchars($notice, ENT_QUOTES, 'UTF-8'); ?></div>
+            <div class="notice"><?php echo htmlspecialchars($notice, ENT_QUOTES, 'UTF-8'); ?>
+                <?php if (!empty($grv)): ?>
+                    <!-- 2026-11-02: print the GRV -->
+                    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+                        <a class="ps-btn ps-btn-default ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode($grv); ?>" target="_blank" rel="noopener">Print GRV (A4 PDF)</a>
+                        <a class="ps-btn ps-btn-outline ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode($grv); ?>&amp;format=slip" target="_blank" rel="noopener">Print slip</a>
+                    </div>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
 
         <?php if ($signedIn && $branch !== ''): ?>
@@ -468,10 +519,12 @@ mysqli_close($conn);
                                     <td class="num"><?php echo htmlspecialchars((string)$line['ordered_qty'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="num"><?php echo htmlspecialchars((string)$line['received_qty'], ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="num"><?php echo htmlspecialchars($remaining, ENT_QUOTES, 'UTF-8'); ?></td>
-                                    <td class="num"><?php echo htmlspecialchars((string)$line['unit_cost'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                    <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $line['unit_cost'], psFxNormalizeCode($poHeader['currency'] ?? '') ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?></td>
                                     <td class="num">
                                         <?php if ($hasRemaining): ?>
                                             <input type="number" step="0.001" min="0" name="receive_qty[]" placeholder="0">
+                                            <input type="hidden" name="receive_pid" value="<?php echo htmlspecialchars((string)$line['product_id'], ENT_QUOTES, 'UTF-8'); ?>">
+                                            <select name="receive_unit[]" data-pack-unit-for="receive_pid" aria-label="Unit" hidden><option value="base"></option></select>
                                             <input type="hidden" name="po_line_id_display[]" value="<?php echo (int)$line['id']; ?>">
                                         <?php else: ?>
                                             <span>Fully received</span>
@@ -548,6 +601,7 @@ mysqli_close($conn);
             <div id="previewContainer"></div>
         <?php endif; ?>
     </div>
-<?php ps_close(); ?>
+<?php echo psPackUnitAssets($conn, trim((string)($_SESSION['the_company'] ?? ''))); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

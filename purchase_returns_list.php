@@ -44,7 +44,7 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -102,7 +102,7 @@ mysqli_close($conn);
                             <td><?php echo htmlspecialchars((string)($row['po_number'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$row['supplier_name'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$row['return_date'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td><?php echo htmlspecialchars((string)$row['total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $row['total'], psFxNormalizeCode($row['currency'] ?? '') ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$row['created_by'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><a href="purchase_return_view.php?id=<?php echo (int)$row['id']; ?>">View</a></td>
                         </tr>
@@ -111,6 +111,6 @@ mysqli_close($conn);
             </tbody>
         </table>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

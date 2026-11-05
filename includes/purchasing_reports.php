@@ -86,6 +86,10 @@ function psSupplierPurchasingHistory(mysqli $conn, int $supplierId, array $filte
 
     $from = trim((string)($filters['from_date'] ?? ''));
     $to = trim((string)($filters['to_date'] ?? ''));
+    // 2026-10-21: per-currency totals; consolidated base from each document's stored base total / rate.
+    require_once __DIR__ . '/fx_report.php';
+    $ctx = $filters['fx'] ?? psFxrContext($conn, []);
+    $poMix = $grvMix = $retMix = [];
 
     // POs
     $poSql = 'SELECT * FROM purchase_orders WHERE supplier_id = ?';
@@ -129,6 +133,12 @@ function psSupplierPurchasingHistory(mysqli $conn, int $supplierId, array $filte
                     }
                 }
                 $row['_total'] = $hdrTotal;
+                if (!psFxrRowMatches($ctx, $row['currency'] ?? null)) {
+                    continue;
+                }
+                $poRate = (float)($row['fx_rate'] ?? 0);
+                $row['_base_total'] = $poRate > 0 ? number_format(round((float)$hdrTotal / $poRate, 2), 2, '.', '') : null;
+                psFxrAdd($poMix, $ctx, $row['currency'] ?? null, $hdrTotal, $row['_base_total'], ['rate' => (string)($row['fx_rate'] ?? ''), 'ids' => (string)($row['fx_rate_ids'] ?? '')]);
                 $pos[] = $row;
                 $poCount++;
                 if (function_exists('bcadd')) {
@@ -180,8 +190,12 @@ function psSupplierPurchasingHistory(mysqli $conn, int $supplierId, array $filte
         if (mysqli_stmt_execute($stmt)) {
             $res = mysqli_stmt_get_result($stmt);
             while ($res && $row = mysqli_fetch_assoc($res)) {
+                if (!psFxrRowMatches($ctx, $row['currency'] ?? null)) {
+                    continue;
+                }
                 $grvs[] = $row;
                 $grvCount++;
+                psFxrAdd($grvMix, $ctx, $row['currency'] ?? null, (string)($row['totalz'] ?? '0'), $row['base_total'] ?? null, ['rate' => (string)($row['fx_rate'] ?? ''), 'ids' => (string)($row['fx_rate_ids'] ?? '')]);
                 // Multi-currency: value in the company base (each receipt at its own rate; older receipts are base).
                 $tv = psStockDecimal((string)((($row['base_total'] ?? null) !== null && $row['base_total'] !== '') ? $row['base_total'] : ($row['totalz'] ?? '0')), 2);
                 if ($tv === null) {
@@ -232,7 +246,11 @@ function psSupplierPurchasingHistory(mysqli $conn, int $supplierId, array $filte
         if (mysqli_stmt_execute($stmt)) {
             $res = mysqli_stmt_get_result($stmt);
             while ($res && $row = mysqli_fetch_assoc($res)) {
+                if (!psFxrRowMatches($ctx, $row['currency'] ?? null)) {
+                    continue;
+                }
                 $returns[] = $row;
+                psFxrAdd($retMix, $ctx, $row['currency'] ?? null, (string)($row['total'] ?? '0'), $row['base_total'] ?? null, ['rate' => (string)($row['fx_rate'] ?? ''), 'ids' => (string)($row['fx_rate_ids'] ?? '')]);
                 $tv = (string)($row['total'] ?? '0.00');
                 if (function_exists('bcadd')) {
                     $returnValue = bcadd($returnValue, $tv, 2);
@@ -262,17 +280,24 @@ function psSupplierPurchasingHistory(mysqli $conn, int $supplierId, array $filte
         }
     }
 
+    $netMix = $grvMix;
+    psFxrMerge($netMix, psFxrNegate($retMix));
     return [
         'ok' => true,
         'supplier' => $supplier,
         'summary' => [
-            'po_count' => $poCount,
-            'po_value' => $poValue,
+            'po_count' => count($pos),
+            // Consolidated base (each document at its stored rate); per-currency mixes in fx_*.
+            'po_value' => psFxrMoney(psFxrBase($poMix)),
             'grv_count' => $grvCount,
-            'grv_value' => $grvValue,
-            'return_value' => $returnValue,
-            'net_received_value' => $netReceived,
+            'grv_value' => psFxrMoney(psFxrBase($grvMix)),
+            'return_value' => psFxrMoney(psFxrBase($retMix)),
+            'net_received_value' => psFxrMoney(psFxrBase($netMix)),
             'latest_date' => $latest,
+            'fx_po' => $poMix,
+            'fx_grv' => $grvMix,
+            'fx_return' => $retMix,
+            'fx_net' => $netMix,
         ],
         'pos' => $pos,
         'grvs' => $grvs,
@@ -532,6 +557,9 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
 {
     require_once __DIR__ . '/reporting.php';
     $kind = strtolower(trim($kind));
+    require_once __DIR__ . '/fx_report.php';
+    $ctx = psFxrContext($conn, $filters + $_GET);
+    $keepRow = fn($r) => psFxrRowMatches($ctx, $r['currency'] ?? null);
     if ($kind === 'po') {
         $res = psPurchasingPoReport($conn, $filters);
         if (empty($res['ok'])) {
@@ -539,10 +567,12 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
         }
         $headers = [
             'PO #', 'Supplier code', 'Supplier name', 'Status', 'Branch', 'Order date',
-            'Ordered qty', 'Received qty', 'Outstanding qty', 'Ordered value',
+            'Ordered qty', 'Received qty', 'Outstanding qty',
         ];
+        $headers = array_merge($headers, psFxrCsvHeaders($ctx));
         $lines = [];
-        foreach ($res['rows'] as $row) {
+        foreach (array_filter($res['rows'], $keepRow) as $row) {
+            $poRate = (float)($row['fx_rate'] ?? 0);
             $lines[] = [
                 (string)$row['po_number'],
                 (string)($row['supplier_code'] ?? ''),
@@ -553,8 +583,9 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
                 (string)$row['_ordered_qty'],
                 (string)$row['_received_qty'],
                 (string)$row['_remaining_qty'],
-                (string)$row['_ordered_value'],
             ];
+            $lines[count($lines) - 1] = array_merge($lines[count($lines) - 1], psFxrCsvValues($ctx, $row['currency'] ?? null, (string)$row['_ordered_value'],
+                $poRate > 0 ? number_format(round((float)$row['_ordered_value'] / $poRate, 2), 2, '.', '') : null, (string)($row['fx_rate'] ?? ''), (string)($row['fx_rate_ids'] ?? '')));
         }
         return ['ok' => true, 'filename' => 'purchasing_po_report.csv', 'headers' => $headers, 'rows' => $lines];
     }
@@ -565,10 +596,11 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
         }
         $headers = [
             'GRV #', 'PO #', 'Supplier code', 'Supplier', 'Supplier invoice',
-            'Date', 'Branch', 'Received total', 'Currency', 'Total in base', 'User',
+            'Date', 'Branch', 'User',
         ];
+        $headers = array_merge($headers, psFxrCsvHeaders($ctx));
         $lines = [];
-        foreach ($res['rows'] as $row) {
+        foreach (array_filter($res['rows'], $keepRow) as $row) {
             $lines[] = [
                 (string)($row['grv_number'] ?? ''),
                 (string)($row['po_number'] ?? ''),
@@ -577,11 +609,9 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
                 (string)($row['reference1'] ?? ''),
                 (string)$row['date_'],
                 (string)$row['branch'],
-                (string)$row['totalz'],
-                (string)(($row['currency'] ?? '') !== '' && $row['currency'] !== null ? $row['currency'] : ($row['payment_mode'] ?? '')),
-                (string)(($row['base_total'] ?? null) !== null ? $row['base_total'] : $row['totalz']),
                 (string)($row['created_by'] ?? ''),
             ];
+            $lines[count($lines) - 1] = array_merge($lines[count($lines) - 1], psFxrCsvValues($ctx, $row['currency'] ?? null, (string)$row['totalz'], $row['base_total'] ?? null, (string)($row['fx_rate'] ?? ''), (string)($row['fx_rate_ids'] ?? '')));
         }
         return ['ok' => true, 'filename' => 'purchasing_grv_report.csv', 'headers' => $headers, 'rows' => $lines];
     }
@@ -592,10 +622,11 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
         }
         $headers = [
             'Return #', 'GRV #', 'PO #', 'Supplier code', 'Supplier',
-            'Date', 'Branch', 'Return total', 'User',
+            'Date', 'Branch', 'User',
         ];
+        $headers = array_merge($headers, psFxrCsvHeaders($ctx));
         $lines = [];
-        foreach ($res['rows'] as $row) {
+        foreach (array_filter($res['rows'], $keepRow) as $row) {
             $lines[] = [
                 (string)$row['return_number'],
                 (string)$row['grv_number'],
@@ -604,9 +635,9 @@ function psPurchasingReportExportCsv(mysqli $conn, string $kind, array $filters 
                 (string)$row['supplier_name'],
                 (string)$row['return_date'],
                 (string)$row['branch'],
-                (string)$row['total'],
                 (string)$row['created_by'],
             ];
+            $lines[count($lines) - 1] = array_merge($lines[count($lines) - 1], psFxrCsvValues($ctx, $row['currency'] ?? null, (string)$row['total'], $row['base_total'] ?? null, (string)($row['fx_rate'] ?? ''), (string)($row['fx_rate_ids'] ?? '')));
         }
         return ['ok' => true, 'filename' => 'purchasing_returns_report.csv', 'headers' => $headers, 'rows' => $lines];
     }

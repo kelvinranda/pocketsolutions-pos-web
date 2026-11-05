@@ -7,6 +7,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/branch_access.php';
 require_once __DIR__ . '/includes/zimra.php';
+require_once __DIR__ . '/includes/receipt_reprint.php';
 
 mysqli_report(MYSQLI_REPORT_OFF);
 if (!psBranchSessionAuthenticated()) {
@@ -27,6 +28,23 @@ if (!$r || !psBranchSaleBranchAuthorised($conn, (string)$r['branch'])
     mysqli_close($conn);
     exit('Fiscal receipt not found.');
 }
+// 2026-10-24: Till users — only fiscal invoices for their own recent sales, and only with a supervisor's
+// approval (a printed fiscal receipt after the sale is a copy). Credit notes are Supervisor+ only.
+if (psOperatorIsScoped()) {
+    $saleHdr = strtoupper((string)$r['source_type']) === 'SALE' ? psOperatorSaleHeader($conn, (string)$r['invoice_number']) : null;
+    if ($saleHdr === null || !psOperatorMayOpenReceipt($conn, $saleHdr)) {
+        mysqli_close($conn);
+        exit('Fiscal receipt not found.');
+    }
+}
+$grant = psReprintConsumeGrant((string)$r['invoice_number'], PS_REPRINT_DOC_FISCAL, trim((string)($_GET['grant'] ?? '')));
+if (empty($grant['ok'])) {
+    psReprintAudit($conn, (string)$r['invoice_number'], (string)$r['branch'], 'DENIED', PS_REPRINT_DOC_FISCAL, null, 'Opened without a valid approval');
+    mysqli_close($conn);
+    psReprintDeniedPage((string)$grant['error']);
+    exit;
+}
+psReceiptReprintLog($conn, (string)$r['invoice_number'], (string)$r['branch'], 'web', null, null, null, (string)$grant['approved_by'], PS_REPRINT_DOC_FISCAL);
 $v = psZimraReceiptView($conn, $r);
 $rc = json_decode((string)$r['request_json'], true) ?: [];
 $qr = psZimraQrDataUri((string)$r['qr_url']);

@@ -24,3 +24,7 @@ $dbname = $cfg['dbname'];
 // Health-check 2026-10-13: one login / session-timeout / role floor for every web page.
 require_once __DIR__ . '/includes/page_access.php';
 psPageAccessEnforce();
+
+// 2026-11-02: show shared branch names ("RUSAPE~SKYTECH" is shown as "RUSAPE") on every page.
+require_once __DIR__ . '/includes/branch_label.php';
+psBranchLabelStartBuffer();

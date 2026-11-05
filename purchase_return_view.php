@@ -33,7 +33,7 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -69,7 +69,7 @@ mysqli_close($conn);
             </div>
             <div>Branch: <?php echo htmlspecialchars((string)$header['branch'], ENT_QUOTES, 'UTF-8'); ?>
                 | Date: <?php echo htmlspecialchars((string)$header['return_date'], ENT_QUOTES, 'UTF-8'); ?>
-                | Total: <?php echo htmlspecialchars((string)$header['total'], ENT_QUOTES, 'UTF-8'); ?>
+                | Total: <?php $prCur = psFxNormalizeCode($header['currency'] ?? '') ?: psFxLegacyCurrency(); echo htmlspecialchars(psFxFormat($conn, $header['total'], $prCur), ENT_QUOTES, 'UTF-8'); ?><?php if (($header['base_total'] ?? null) !== null && $prCur !== psFxBase($conn, psFxSessionCompany())): ?> (<?php echo htmlspecialchars(psFxFormat($conn, $header['base_total'], psFxBase($conn, psFxSessionCompany())), ENT_QUOTES, 'UTF-8'); ?> at the receipt's stored rate)<?php endif; ?>
             </div>
             <div>User: <?php echo htmlspecialchars((string)$header['created_by'], ENT_QUOTES, 'UTF-8'); ?></div>
             <div>Reason: <?php echo htmlspecialchars((string)$header['reason'], ENT_QUOTES, 'UTF-8'); ?></div>
@@ -93,8 +93,8 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)$line['product_id'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$line['description'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$line['quantity'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$line['unit_cost'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$line['line_total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars(psFxFormat($conn, $line['unit_cost'], $prCur), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars(psFxFormat($conn, $line['line_total'], $prCur), ENT_QUOTES, 'UTF-8'); ?></td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -104,6 +104,6 @@ mysqli_close($conn);
             | <a href="purchase_return_audit_history.php?return_number=<?php echo rawurlencode((string)$header['return_number']); ?>">Audit</a>
         </p>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

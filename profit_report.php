@@ -49,6 +49,8 @@ if ($fromDate > $toDate) {
 }
 $branchFilter = trim((string)($_GET['branch'] ?? ''));
 $export = strtolower(trim((string)($_GET['export'] ?? '')));
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = psFxrContext($conn, $_GET);
 
 $error = '';
 $scope = psBranchReportScope($conn);
@@ -91,7 +93,8 @@ $run = function (string $sql, string $types, array $params) use ($conn): ?array 
 
 $groups = [];   // key => [label, extra, qty, sales, cost, unknown]
 $days = [];     // Y-m-d => [sales, cost]
-$tot = ['qty' => 0.0, 'sales' => 0.0, 'cost' => 0.0, 'unknown' => 0, 'refund_sales' => 0.0, 'refund_cost' => 0.0, 'lines' => 0];
+$tot = ['qty' => 0.0, 'sales' => 0.0, 'cost' => 0.0, 'unknown' => 0, 'refund_sales' => 0.0, 'refund_cost' => 0.0, 'lines' => 0,
+    'sm' => [], 'cm' => [], 'rsm' => [], 'rcm' => []];
 
 $keyFor = function (array $r) use ($view): array {
     switch ($view) {
@@ -106,13 +109,40 @@ $keyFor = function (array $r) use ($view): array {
             return [(string)$r['d'], (string)$r['d'], ''];
     }
 };
-$add = function (array $r, float $sign) use (&$groups, &$days, &$tot, $keyFor) {
+// 2026-10-21 multi-currency: every line keeps its sale currency. Sales and the cost saved on the line are in the
+// sale currency (base via the sale's stored rate); a cost taken from the product is already in the base.
+// The float fields below are the consolidated base (resolvable lines only); 'sm' / 'cm' are the per-currency mixes.
+$toBase = function (?string $cur, float $amt, $rate) use ($fx): ?float {
+    $code = psFxNormalizeCode($cur ?? '');
+    if ($code === '' || $code === $fx['base']) {
+        return $amt;
+    }
+    $r = (float)$rate;
+    return $r > 0 ? round($amt / $r, 2) : null;
+};
+$add = function (array $r, float $sign) use (&$groups, &$days, &$tot, $keyFor, $toBase, $fx) {
     $qty = (float)$r['qty'];
-    $sales = (float)$r['sales'];
-    $cost = (float)$r['unit_cost'] * $qty;
+    $salesTxn = $sign * (float)$r['sales_txn'];
+    $lineCost = (int)$r['line_cost'] === 1;
+    $costCur = $lineCost ? $r['cur'] : $fx['base'];
+    $costTxn = $sign * (float)$r['unit_cost_txn'] * $qty;
+    $salesB = $toBase($r['cur'], $salesTxn, $r['rate']);
+    $costB = $lineCost ? $toBase($r['cur'], $costTxn, $r['rate']) : $costTxn;
+    $sales = $sign * ($salesB ?? 0.0);
+    $cost = $sign * ($costB ?? 0.0);
+    $mm = fn(float $v) => number_format($v, 2, '.', '');
     [$k, $label, $extra] = $keyFor($r);
     if (!isset($groups[$k])) {
-        $groups[$k] = ['label' => $label, 'extra' => $extra, 'qty' => 0.0, 'sales' => 0.0, 'cost' => 0.0, 'unknown' => 0];
+        $groups[$k] = ['label' => $label, 'extra' => $extra, 'qty' => 0.0, 'sales' => 0.0, 'cost' => 0.0, 'unknown' => 0, 'sm' => [], 'cm' => []];
+    }
+    $meta = ['rate' => (string)$r['rate']];
+    psFxrAdd($groups[$k]['sm'], $fx, $r['cur'], $mm($salesTxn), $salesB === null ? null : $mm($salesB), $meta);
+    psFxrAdd($groups[$k]['cm'], $fx, $costCur, $mm($costTxn), $costB === null ? null : $mm($costB), $lineCost ? $meta : []);
+    psFxrAdd($tot['sm'], $fx, $r['cur'], $mm($salesTxn), $salesB === null ? null : $mm($salesB), $meta);
+    psFxrAdd($tot['cm'], $fx, $costCur, $mm($costTxn), $costB === null ? null : $mm($costB), $lineCost ? $meta : []);
+    if ($sign < 0) {
+        psFxrAdd($tot['rsm'], $fx, $r['cur'], $mm(-$salesTxn), $salesB === null ? null : $mm(-$salesB), $meta);
+        psFxrAdd($tot['rcm'], $fx, $costCur, $mm(-$costTxn), $costB === null ? null : $mm(-$costB), $lineCost ? $meta : []);
     }
     $groups[$k]['qty'] += $sign * $qty;
     $groups[$k]['sales'] += $sign * $sales;
@@ -128,7 +158,7 @@ $add = function (array $r, float $sign) use (&$groups, &$days, &$tot, $keyFor) {
     $tot['cost'] += $sign * $cost;
     if ($sign > 0) {
         $tot['lines']++;
-        if ((float)$r['unit_cost'] <= 0) {
+        if ((float)$r['unit_cost_txn'] <= 0) {
             $groups[$k]['unknown']++;
             $tot['unknown']++;
         }
@@ -143,25 +173,23 @@ if ($error === '') {
     if ($in === null) {
         $error = 'That branch is not available.';
     } else {
-        // Multi-currency (2026-10-20): line amounts (and the cost saved on the line) are in the sale currency; divide by
-        // the sale's rate to get the company base. The product's current cost (fallback) is already in the base.
-        require_once __DIR__ . '/includes/currency.php';
-        psFxBase($conn, psFxSessionCompany());
-        $fxRate = psFxHasColumn($conn, 'online_sales_ref', 'fx_rate') ? 'COALESCE(NULLIF(r.fx_rate, 0), 1)' : '1';
-        $exclSql = "(CASE WHEN s.tax_data_status = 'COMPLETE' AND s.line_total_excl IS NOT NULL THEN s.line_total_excl + 0 ELSE s.revenue + 0 END) / $fxRate";
-        $costSql = "CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN (s.cost_price + 0) / $fxRate ELSE COALESCE(g.cost_price + 0, 0) END";
+        // Line amounts in the sale currency; currency + stored rate returned so each line is converted at its own rate.
+        $exclSql = "(CASE WHEN s.tax_data_status = 'COMPLETE' AND s.line_total_excl IS NOT NULL THEN s.line_total_excl + 0 ELSE s.revenue + 0 END)";
+        $costSql = "CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN s.cost_price + 0 ELSE COALESCE(g.cost_price + 0, 0) END";
+        $fxCols = "r.currency AS cur, r.fx_rate AS rate, (NULLIF(s.cost_price + 0, 0) IS NOT NULL) AS line_cost";
+        $curF = psFxrCurFilterSql($conn, $fx, 'r.currency');
         $types = 'ss' . $in['types'];
         $params = array_merge([$fromDate, $toDate], $in['params']);
 
         $sales = $run(
             "SELECT DATE(s.date_) AS d, s.product_id, s.product, COALESCE(g.category, '') AS cat, s.branch,
-                    s.quantity + 0 AS qty, $exclSql AS sales, $costSql AS unit_cost
+                    s.quantity + 0 AS qty, $exclSql AS sales_txn, $costSql AS unit_cost_txn, $fxCols
                FROM online_sales s
                LEFT JOIN online_sales_ref r ON r.invoice_number = s.invoice_number AND r.branch = s.branch
                LEFT JOIN goods g ON g.product_id = s.product_id AND g.branch = s.branch
               WHERE DATE(s.date_) BETWEEN ? AND ?
                 AND COALESCE(r.status, '') <> 'CANCELLED'
-                AND s.branch IN (" . $in['sql'] . ')',
+                AND s.branch IN (" . $in['sql'] . ')' . $curF,
             $types,
             $params
         );
@@ -169,8 +197,8 @@ if ($error === '') {
         $refunds = $run(
             "SELECT DATE(q.processed_at) AS d, s.product_id, s.product, COALESCE(g.category, '') AS cat, s.branch,
                     rl.requested_qty + 0 AS qty,
-                    CASE WHEN (s.quantity + 0) <> 0 THEN ($exclSql) / (s.quantity + 0) * (rl.requested_qty + 0) ELSE 0 END AS sales,
-                    $costSql AS unit_cost
+                    CASE WHEN (s.quantity + 0) <> 0 THEN ($exclSql) / (s.quantity + 0) * (rl.requested_qty + 0) ELSE 0 END AS sales_txn,
+                    $costSql AS unit_cost_txn, $fxCols
                FROM sale_refund_requests q
                JOIN sale_refund_request_lines rl ON rl.request_id = q.id
                JOIN online_sales s ON s.id = rl.sale_line_id
@@ -178,7 +206,7 @@ if ($error === '') {
                LEFT JOIN goods g ON g.product_id = s.product_id AND g.branch = s.branch
               WHERE q.status = 'PROCESSED'
                 AND DATE(q.processed_at) BETWEEN ? AND ?
-                AND q.branch IN (" . $in['sql'] . ')',
+                AND q.branch IN (" . $in['sql'] . ')' . $curF,
             $types,
             $params
         );
@@ -194,9 +222,13 @@ if ($error === '') {
         }
     }
 }
-mysqli_close($conn);
-
 $profit = fn(array $g) => $g['sales'] - $g['cost'];
+$profitMix = function (array $g): array {
+    $m = $g['sm'];
+    psFxrMerge($m, psFxrNegate($g['cm']));
+    return $m;
+};
+$M = fn(array $mix, array $o = []) => psFxrAmount($conn, $fx, $mix, $o);
 $margin = fn(array $g) => abs($g['sales']) > 0.00001 ? ($g['sales'] - $g['cost']) / $g['sales'] * 100 : null;
 $pct = fn(?float $m) => $m === null ? '—' : number_format($m, 1) . '%';
 $num = fn(float $v) => number_format($v, 2, '.', '');
@@ -212,15 +244,17 @@ ksort($days);
 
 $scopeLabel = $branchFilter !== '' ? $branchFilter : (count($branchOptions) > 1 ? 'All authorised branches' : implode(', ', $branchOptions));
 $subtitle = $scopeLabel . ' · ' . $fromDate . ' to ' . $toDate . ' · ' . $views[$view];
-$exportQuery = array_filter(['view' => $view, 'from_date' => $fromDate, 'to_date' => $toDate, 'branch' => $branchFilter], fn($v) => $v !== '');
+$exportQuery = array_filter(['view' => $view, 'from_date' => $fromDate, 'to_date' => $toDate, 'branch' => $branchFilter], fn($v) => $v !== '') + psFxrQuery($fx);
 
 $firstCol = ['day' => 'Date', 'product' => 'Product', 'category' => 'Category', 'branch' => 'Branch'][$view];
 
 if ($error === '' && in_array($export, psReportExportFormats(), true)) {
+    $T = fn(array $mix) => psFxrText($conn, $fx, $mix);
     $sumRows = [
-        ['Net sales (excl. VAT, after refunds)', $num($tot['sales'])],
-        ['Cost of sales', $num($tot['cost'])],
-        ['Gross profit', $num($profit($tot))],
+        ['Reporting currency', $fx['view'] === PS_FXR_BREAKDOWN ? 'Original currencies (no conversion)' : $fx['base'] . ' (each sale at its stored rate)'],
+        ['Net sales (excl. VAT, after refunds)', $T($tot['sm'])],
+        ['Cost of sales', $T($tot['cm'])],
+        ['Gross profit', $T($profitMix($tot))],
         ['Margin', $pct($margin($tot))],
         ['Refunds deducted (sales / cost)', $num($tot['refund_sales']) . ' / ' . $num($tot['refund_cost'])],
         ['Sale lines with unknown cost', (string)$tot['unknown']],
@@ -236,12 +270,15 @@ if ($error === '' && in_array($export, psReportExportFormats(), true)) {
         if ($view === 'product') {
             $row[] = $g['extra'];
         }
-        $rows[] = array_merge($row, [$qtyText($g['qty']), $num($g['sales']), $num($g['cost']), $num($profit($g)), $margin($g) === null ? '' : number_format($margin($g), 1), (string)$g['unknown']]);
+        $rows[] = array_merge($row, [$qtyText($g['qty']), $T($g['sm']), $T($g['cm']), $T($profitMix($g)), $margin($g) === null ? '' : number_format($margin($g), 1), (string)$g['unknown']]);
     }
+    $curRows = psFxrCsvAggRows($fx, $tot['sm']);
     psReportExportSend($export, 'Profit & Margin', $subtitle, [
         ['heading' => 'Summary', 'columns' => ['Measure', 'Value'], 'rows' => $sumRows,
          'note' => 'Sales are VAT-exclusive where tax data exists. Cancelled sales are left out; processed refunds are deducted.'],
         ['heading' => $views[$view], 'columns' => $cols, 'rows' => $rows, 'empty' => 'No sales in this period.'],
+        ['heading' => 'Net sales by currency', 'columns' => psFxrCsvAggHeaders($fx), 'rows' => $curRows,
+         'note' => 'Each sale line is converted at the rate stored with its sale. Margin % is on the ' . $fx['base'] . ' figures.'],
     ], 'profit_margin_' . $view . '_' . $fromDate . '_' . $toDate);
 }
 
@@ -367,22 +404,23 @@ if ($days) {
         <p class="error"><?php echo $h($error); ?></p>
     <?php else: ?>
         <?php echo psReportExportToolbar($exportQuery); ?>
+        <?php echo psFxrToolbar($fx, array_filter(['view' => $view, 'from_date' => $fromDate, 'to_date' => $toDate, 'branch' => $branchFilter], fn($v) => $v !== '')); ?>
         <p class="hint"><?php echo $h($subtitle); ?></p>
         <div class="pr-kpis">
-            <div><span>Net sales</span><b><?php echo $h(ps_money($tot['sales'])); ?></b></div>
-            <div><span>Cost of sales</span><b><?php echo $h(ps_money($tot['cost'])); ?></b></div>
-            <div><span>Gross profit</span><b><?php echo $h(ps_money($profit($tot))); ?></b></div>
-            <div><span>Margin</span><b><?php echo $h($pct($margin($tot))); ?></b></div>
+            <div><span>Net sales</span><b><?php echo $M($tot['sm']); ?></b></div>
+            <div><span>Cost of sales</span><b><?php echo $M($tot['cm']); ?></b></div>
+            <div><span>Gross profit</span><b><?php echo $M($profitMix($tot)); ?></b></div>
+            <div><span>Margin (on <?php echo $h($fx['base']); ?>)</span><b><?php echo $h($pct($margin($tot))); ?></b></div>
         </div>
         <?php if ($tot['refund_sales'] != 0.0): ?>
-            <p class="hint">Refunds deducted: <?php echo $h(ps_money($tot['refund_sales'])); ?> sales, <?php echo $h(ps_money($tot['refund_cost'])); ?> cost.</p>
+            <p class="hint">Refunds deducted: <?php echo $M($tot['rsm']); ?> sales, <?php echo $M($tot['rcm']); ?> cost.</p>
         <?php endif; ?>
         <?php if ($tot['unknown'] > 0): ?>
             <p class="error"><?php echo (int)$tot['unknown']; ?> sale line(s) have no cost price, so their profit shows as the full sale. Set cost prices on those items for an accurate margin.</p>
         <?php endif; ?>
 
         <?php if ($chart !== ''): ?>
-            <h2>Daily trend</h2>
+            <h2>Daily trend (in <?php echo $h($fx['base']); ?>)</h2>
             <?php echo $chart; ?>
             <p class="pr-legend"><i style="background:#178a43"></i>Gross profit <i style="background:#c2410c"></i>Loss <i style="background:#f5b400"></i>Margin %</p>
         <?php endif; ?>
@@ -404,9 +442,9 @@ if ($days) {
                         <td><?php echo $h($g['label']); ?><?php if ($g['unknown'] > 0): ?> <span class="ps-muted" title="Lines without a cost price">(<?php echo (int)$g['unknown']; ?> no cost)</span><?php endif; ?></td>
                         <?php if ($view === 'product'): ?><td><?php echo $h($g['extra']); ?></td><?php endif; ?>
                         <td class="num"><?php echo $h($qtyText($g['qty'])); ?></td>
-                        <td class="num"><?php echo $h(ps_money($g['sales'])); ?></td>
-                        <td class="num"><?php echo $h(ps_money($g['cost'])); ?></td>
-                        <td class="num"><?php echo $h(ps_money($profit($g))); ?></td>
+                        <td class="num"><?php echo $M($g['sm']); ?></td>
+                        <td class="num"><?php echo $M($g['cm']); ?></td>
+                        <td class="num"><?php echo $M($profitMix($g)); ?></td>
                         <td class="num"><?php echo $h($pct($margin($g))); ?></td>
                     </tr>
                 <?php endforeach; ?>
@@ -414,15 +452,16 @@ if ($days) {
                 <tfoot><tr>
                     <th>Total</th><?php if ($view === 'product'): ?><th></th><?php endif; ?>
                     <th class="num"><?php echo $h($qtyText($tot['qty'])); ?></th>
-                    <th class="num"><?php echo $h(ps_money($tot['sales'])); ?></th>
-                    <th class="num"><?php echo $h(ps_money($tot['cost'])); ?></th>
-                    <th class="num"><?php echo $h(ps_money($profit($tot))); ?></th>
+                    <th class="num"><?php echo $M($tot['sm'], ['strong' => true]); ?></th>
+                    <th class="num"><?php echo $M($tot['cm'], ['strong' => true]); ?></th>
+                    <th class="num"><?php echo $M($profitMix($tot), ['strong' => true]); ?></th>
                     <th class="num"><?php echo $h($pct($margin($tot))); ?></th>
                 </tr></tfoot>
             </table>
             </div>
+            <?php echo psFxrSummary($conn, $fx, $tot['sm'], 'Net sales by currency (sale lines, after refunds)'); ?>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

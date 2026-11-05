@@ -694,30 +694,47 @@ function psSecurityEnsureAuditSchema(mysqli $conn): bool
     }
     mysqli_report(MYSQLI_REPORT_OFF);
     $check = @mysqli_query($conn, 'SELECT 1 FROM security_audit LIMIT 0');
-    if ($check) {
-        $ready = true;
-        return true;
+    if (!$check) {
+        $sql = "CREATE TABLE IF NOT EXISTS security_audit (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            occurred_at DATETIME NOT NULL,
+            actor VARCHAR(250) NOT NULL DEFAULT '',
+            action_code VARCHAR(64) NOT NULL,
+            target_type VARCHAR(64) NOT NULL DEFAULT '',
+            target_id VARCHAR(64) NOT NULL DEFAULT '',
+            source VARCHAR(64) NOT NULL DEFAULT 'web',
+            ip_address VARCHAR(64) NOT NULL DEFAULT '',
+            summary VARCHAR(500) NOT NULL DEFAULT '',
+            before_json TEXT NULL,
+            after_json TEXT NULL,
+            company_name VARCHAR(250) NOT NULL DEFAULT '',
+            PRIMARY KEY (id),
+            KEY idx_security_audit_occurred (occurred_at),
+            KEY idx_security_audit_actor (actor),
+            KEY idx_security_audit_action (action_code),
+            KEY idx_security_audit_company (company_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+        if (!mysqli_query($conn, $sql)) {
+            error_log('security: security_audit create failed');
+            return false;
+        }
     }
-    $sql = "CREATE TABLE IF NOT EXISTS security_audit (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-        occurred_at DATETIME NOT NULL,
-        actor VARCHAR(250) NOT NULL DEFAULT '',
-        action_code VARCHAR(64) NOT NULL,
-        target_type VARCHAR(64) NOT NULL DEFAULT '',
-        target_id VARCHAR(64) NOT NULL DEFAULT '',
-        source VARCHAR(64) NOT NULL DEFAULT 'web',
-        ip_address VARCHAR(64) NOT NULL DEFAULT '',
-        summary VARCHAR(500) NOT NULL DEFAULT '',
-        before_json TEXT NULL,
-        after_json TEXT NULL,
-        PRIMARY KEY (id),
-        KEY idx_security_audit_occurred (occurred_at),
-        KEY idx_security_audit_actor (actor),
-        KEY idx_security_audit_action (action_code)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
-    if (!mysqli_query($conn, $sql)) {
-        error_log('security: security_audit create failed');
-        return false;
+    $cols = [];
+    $res = @mysqli_query($conn, 'SHOW COLUMNS FROM security_audit');
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $cols[strtolower((string)$r['Field'])] = true;
+    }
+    if (!isset($cols['company_name'])) {
+        if (!mysqli_query($conn, "ALTER TABLE security_audit ADD COLUMN company_name VARCHAR(250) NOT NULL DEFAULT ''")
+            && mysqli_errno($conn) !== 1060) {
+            error_log('security: security_audit company column was not added');
+            return false;
+        }
+        // Classify existing rows from the actor's current company (blank stays blank).
+        mysqli_query($conn, "UPDATE security_audit a
+            INNER JOIN users u ON u.email = a.actor
+            SET a.company_name = u.company_name
+            WHERE a.company_name = '' AND u.company_name <> ''");
     }
     $ready = true;
     return true;
@@ -765,12 +782,19 @@ function psSecurityAudit(mysqli $conn, string $action, array $meta = []): bool
     $beforeJson = $before !== null ? json_encode($before, JSON_UNESCAPED_UNICODE) : null;
     $afterJson = $after !== null ? json_encode($after, JSON_UNESCAPED_UNICODE) : null;
     $occurred = date('Y-m-d H:i:s');
+    $company = '';
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $company = trim((string)($_SESSION['the_company'] ?? ''));
+    }
+    if ($company === '' && isset($meta['company'])) {
+        $company = trim((string)$meta['company']);
+    }
 
     $stmt = mysqli_prepare(
         $conn,
         'INSERT INTO security_audit
-            (occurred_at, actor, action_code, target_type, target_id, source, ip_address, summary, before_json, after_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            (occurred_at, actor, action_code, target_type, target_id, source, ip_address, summary, before_json, after_json, company_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     if (!$stmt) {
         error_log('security: audit prepare failed');
@@ -778,7 +802,7 @@ function psSecurityAudit(mysqli $conn, string $action, array $meta = []): bool
     }
     mysqli_stmt_bind_param(
         $stmt,
-        'ssssssssss',
+        'sssssssssss',
         $occurred,
         $actor,
         $action,
@@ -788,7 +812,8 @@ function psSecurityAudit(mysqli $conn, string $action, array $meta = []): bool
         $ip,
         $summary,
         $beforeJson,
-        $afterJson
+        $afterJson,
+        $company
     );
     $ok = mysqli_stmt_execute($stmt);
     if (!$ok) {
@@ -826,6 +851,53 @@ function psSecurityAuditSanitizePayload(array $payload): array
         }
     }
     return $out;
+}
+
+/**
+ * Recent security audit rows for the signed-in company.
+ * Super Admin (not acting as a client) sees every company; everyone else sees only their company_name.
+ *
+ * @return list<array<string,mixed>>
+ */
+function psSecurityAuditFetchHistory(mysqli $conn, int $limit = 200): array
+{
+    if (!psSecurityEnsureAuditSchema($conn)) {
+        return [];
+    }
+    $limit = max(1, min(500, $limit));
+    $super = function_exists('psPlatformSessionIsSuperAdmin') && psPlatformSessionIsSuperAdmin()
+        && !(function_exists('psPlatformIsActing') && psPlatformIsActing());
+    if ($super) {
+        $res = mysqli_query(
+            $conn,
+            'SELECT id, occurred_at, actor, action_code, target_type, target_id, source, ip_address, summary, company_name
+             FROM security_audit ORDER BY id DESC LIMIT ' . $limit
+        );
+    } else {
+        $company = session_status() === PHP_SESSION_ACTIVE ? trim((string)($_SESSION['the_company'] ?? '')) : '';
+        if ($company === '') {
+            return [];
+        }
+        $stmt = mysqli_prepare(
+            $conn,
+            'SELECT id, occurred_at, actor, action_code, target_type, target_id, source, ip_address, summary, company_name
+             FROM security_audit WHERE company_name = ? ORDER BY id DESC LIMIT ' . $limit
+        );
+        if (!$stmt) {
+            return [];
+        }
+        mysqli_stmt_bind_param($stmt, 's', $company);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+    }
+    $rows = [];
+    while ($res && ($row = mysqli_fetch_assoc($res))) {
+        $rows[] = $row;
+    }
+    if (isset($stmt) && $stmt) {
+        mysqli_stmt_close($stmt);
+    }
+    return $rows;
 }
 
 function psSecurityRequireAdminJson(): void

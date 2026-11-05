@@ -19,19 +19,7 @@ if (!$conn) {
 mysqli_set_charset($conn, 'utf8mb4');
 psSecurityEnsureAuditSchema($conn);
 
-$rows = [];
-$res = mysqli_query(
-    $conn,
-    'SELECT id, occurred_at, actor, action_code, target_type, target_id, source, ip_address, summary
-     FROM security_audit
-     ORDER BY id DESC
-     LIMIT 200'
-);
-if ($res) {
-    while ($row = mysqli_fetch_assoc($res)) {
-        $rows[] = $row;
-    }
-}
+$rows = psSecurityAuditFetchHistory($conn, 200);
 mysqli_close($conn);
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');

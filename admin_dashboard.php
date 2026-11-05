@@ -88,7 +88,6 @@ $dashLogo = ($conn && $dashCompany !== '' && function_exists('psCompanyLogoGet')
     <a class="ps-tile" style="background:#2C7A4B" href="z_report.php"><div>Z Report</div><span>Sales by cashier today</span></a>
     <a class="ps-tile" style="background:#C45C66" href="expenses.php"><div>Expenses</div><span>Costs</span></a>
     <a class="ps-tile" style="background:#6A45C8" href="users.php"><div>Users</div><span>Staff accounts</span></a>
-    <a class="ps-tile" style="background:#3D6B8A" href="branch_integrity_report.php"><div>Branch Integrity</div><span>Records with missing branches</span></a>
   </div>
 </div>
 

@@ -34,6 +34,8 @@ $productId = trim((string)($_GET['product_id'] ?? ''));
 $invoiceNumber = trim((string)($_GET['invoice_number'] ?? ''));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $export = strtolower(trim((string)($_GET['export'] ?? '')));
+// 2026-10-21: currency view (Consolidated in the base / By currency) and currency filter.
+$fx = psFxrContext($conn, $_GET);
 
 $raw = [
     'from_date' => $fromDate,
@@ -45,6 +47,8 @@ $raw = [
     'page' => $page,
     'page_size' => 50,
     'sale_class' => $saleClass,
+    'fx_view' => $fx['view'],
+    'fx_cur' => $fx['cur'],
 ];
 
 if ($export === 'csv') {
@@ -55,6 +59,7 @@ if ($export === 'csv') {
         'by_product' => 'by_product',
         'payments' => 'payments',
         'cancelled' => 'list',
+        'by_currency' => 'by_currency',
     ];
     $kind = $kindMap[$report] ?? '';
     if ($kind === '') {
@@ -84,6 +89,7 @@ if (empty($norm['ok'])) {
     $error = (string)($norm['error'] ?? 'Report could not be loaded.');
 } else {
     $f = $norm['filters'];
+    $f['fx'] = $fx;
     if ($report === 'invoice') {
         $invoiceDetail = psSalesReportingInvoiceDetail($conn, $invoiceNumber);
         if (empty($invoiceDetail['ok'])) {
@@ -113,13 +119,11 @@ if (empty($norm['ok'])) {
     }
 }
 
-mysqli_close($conn);
-
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
-$q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $toDate, $branchFilter, $cashier, $productId, $invoiceNumber, $isAdmin): string {
-    $base = [
+$q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $toDate, $branchFilter, $cashier, $productId, $invoiceNumber, $isAdmin, $fx): string {
+    $base = psFxrQuery($fx) + [
         'report' => $report,
         'sale_class' => $saleClass,
         'from_date' => $fromDate,
@@ -141,6 +145,13 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
     }
     return $parts === [] ? '' : ('?' . implode('&', $parts));
 };
+// Money cells: one helper for every amount on the page (consolidated with conversion marker / original currencies).
+$m = static fn(array $mix, array $opt = []): string => psFxrAmount($conn, $fx, $mix, $opt);
+$keepQuery = array_filter([
+    'report' => $report, 'sale_class' => $saleClass, 'from_date' => $fromDate, 'to_date' => $toDate,
+    'cashier' => $cashier, 'product_id' => $productId, 'invoice_number' => $invoiceNumber,
+    'branch' => $isAdmin ? $branchFilter : '',
+], fn($v) => $v !== '' && $v !== null);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -188,6 +199,8 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
         <?php endif; ?>
         <label>From <input type="date" name="from_date" value="<?php echo $h($fromDate); ?>"></label>
         <label>To <input type="date" name="to_date" value="<?php echo $h($toDate); ?>"></label>
+        <?php if ($fx['view'] === PS_FXR_BREAKDOWN): ?><input type="hidden" name="fx_view" value="breakdown"><?php endif; ?>
+        <?php if ($fx['cur'] !== ''): ?><input type="hidden" name="fx_cur" value="<?php echo $h($fx['cur']); ?>"><?php endif; ?>
         <?php if ($isAdmin): ?>
             <label>Branch
                 <select name="branch">
@@ -208,10 +221,11 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
             <label>Invoice <input type="text" name="invoice_number" value="<?php echo $h($invoiceNumber); ?>" maxlength="250"></label>
         <?php endif; ?>
         <button type="submit">Apply</button>
-        <?php if (in_array($report, ['list', 'by_branch', 'by_cashier', 'by_product', 'payments', 'cancelled'], true)): ?>
+        <?php if (in_array($report, ['list', 'by_branch', 'by_cashier', 'by_product', 'payments', 'cancelled', 'by_currency'], true)): ?>
             <a href="sales_reports.php<?php echo $h($q(['export' => 'csv'])); ?>">Export CSV</a>
         <?php endif; ?>
     </form>
+    <?php if ($report !== 'invoice') { echo psFxrToolbar($fx, $keepQuery); } ?>
 
     <?php if ($error !== ''): ?>
         <p class="error"><?php echo $h($error); ?></p>
@@ -223,8 +237,26 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
             Date: <?php echo $h($hdr['date']); ?> ·
             Cashier: <?php echo $h($hdr['cashier']); ?> ·
             Status: <?php echo $h($hdr['status']); ?> ·
-            Total: <?php echo $h($hdr['total']); ?>
+            Total: <?php echo $h(psFxFormat($conn, $hdr['total'], psFxNormalizeCode($hdr['fx_currency'] ?? '') ?: psFxLegacyCurrency())); ?>
         </p>
+        <?php
+        // Full conversion details on the transaction itself (not only in a tooltip).
+        $invCur = psFxNormalizeCode($hdr['fx_currency'] ?? '');
+        if ($invCur === '') {
+            echo '<p class="hint">Legacy sale: recorded before currencies were stored. Its currency is assumed to be ' . $h(psFxLegacyCurrency()) . ' (1:1 with the base).</p>';
+        } elseif ($invCur !== $fx['base']) {
+            $invRateFrom = psFxrRateFrom($conn, (string)$hdr['fx_rate_ids']);
+            echo '<div class="fxr-sum"><table class="fxr-sum-table"><tbody>'
+                . '<tr><th>Sale currency</th><td>' . $h($invCur) . '</td></tr>'
+                . '<tr><th>Total in sale currency</th><td>' . $h(psFxFormat($conn, $hdr['total'], $invCur)) . '</td></tr>'
+                . '<tr><th>Exchange rate (stored)</th><td>' . $h($hdr['fx_rate'] !== '' ? '1 ' . $fx['base'] . ' = ' . psFxrRateText($hdr['fx_rate']) . ' ' . $invCur : 'not stored') . '</td></tr>'
+                . ($invRateFrom !== '' ? '<tr><th>Rate in force from</th><td>' . $h($invRateFrom) . '</td></tr>' : '')
+                . ($hdr['fx_path'] !== '' ? '<tr><th>Rate path</th><td>' . $h($hdr['fx_path']) . '</td></tr>' : '')
+                . '<tr><th>Total in ' . $h($fx['base']) . '</th><td>' . ($hdr['base_total'] !== null ? $h(psFxFormat($conn, $hdr['base_total'], $fx['base'])) : '<span class="fxa-tag fxa-tag-warn">⚠ no stored rate</span>') . '</td></tr>'
+                . '</tbody></table></div>';
+        }
+        $lineCur = $invCur !== '' ? $invCur : psFxLegacyCurrency();
+        ?>
         <p class="hint"><?php echo $h($hdr['header_method_note']); ?></p>
         <p><a href="my_receipt.php?invoice_number=<?php echo $h($hdr['invoice_number']); ?>">Open receipt</a></p>
         <h3>Lines</h3>
@@ -236,9 +268,9 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                     <td><?php echo $h($line['product_id']); ?></td>
                     <td><?php echo $h($line['product']); ?></td>
                     <td><?php echo $h($line['branch']); ?></td>
-                    <td><?php echo $h($line['quantity']); ?></td>
-                    <td><?php echo $h($line['unit_price']); ?></td>
-                    <td><?php echo $h($line['revenue']); ?></td>
+                    <td><?php echo $h(($line['sell_text'] ?? '') !== '' ? $line['sell_text'] : $line['quantity']); ?></td>
+                    <td><?php echo ($line['sell_price'] ?? '') !== '' ? $h(psFxFormat($conn, $line['sell_price'], $lineCur) . ' / ' . $line['sell_unit']) : ($line['unit_price'] !== '' ? $h(psFxFormat($conn, $line['unit_price'], $lineCur)) : ''); ?></td>
+                    <td><?php echo $h(psFxFormat($conn, $line['revenue'], $lineCur)); ?></td>
                     <td><?php echo $h($line['status']); ?></td>
                 </tr>
             <?php endforeach; ?>
@@ -252,8 +284,8 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                 <?php foreach ($invoiceDetail['payments'] as $p): ?>
                     <tr>
                         <td><?php echo $h($p['method']); ?></td>
-                        <td><?php echo $h($p['amount_paid']); ?></td>
-                        <td><?php echo $h($p['change_amount']); ?></td>
+                        <td><?php echo $h(psFxFormat($conn, $p['amount_paid'], $p['currency'] !== '' ? $p['currency'] : $lineCur)); ?></td>
+                        <td><?php echo $h(psFxFormat($conn, $p['change_amount'], $p['currency'] !== '' ? $p['currency'] : $lineCur)); ?></td>
                         <td><?php echo $h($p['currency']); ?></td>
                         <td><?php echo $h($p['reference']); ?></td>
                         <td><?php echo $h($p['created_at']); ?></td>
@@ -268,20 +300,21 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
         <?php if ($report === 'by_branch' || $report === 'by_cashier'): ?>
             <?php $key = $report === 'by_branch' ? 'branch' : 'cashier'; ?>
             <table>
-                <thead><tr><th><?php echo $report === 'by_branch' ? 'Branch' : 'Cashier'; ?></th><th>Txns</th><th>Revenue</th><th>ATV</th></tr></thead>
+                <thead><tr><th><?php echo $report === 'by_branch' ? 'Branch' : 'Cashier'; ?></th><th>Txns</th><th>Revenue</th><th>ATV<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '' : ' (' . $h($fx['base']) . ')'; ?></th></tr></thead>
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
                     <tr>
                         <td><?php echo $h($row[$key]); ?></td>
                         <td><?php echo (int)$row['txn_count']; ?></td>
-                        <td><?php echo $h($row['revenue']); ?></td>
-                        <td><?php echo $h($row['atv']); ?></td>
+                        <td class="num"><?php echo $m($row['fx']); ?></td>
+                        <td class="num"><?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '—' : $h(psFxFormat($conn, $row['atv'], $fx['base'])); ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
             </table>
             <?php if (!empty($result['totals'])): ?>
-                <p class="totals">Total: <?php echo (int)$result['totals']['txn_count']; ?> txn · <?php echo $h($result['totals']['revenue']); ?> · ATV <?php echo $h($result['totals']['atv']); ?></p>
+                <p class="totals">Total: <?php echo (int)$result['totals']['txn_count']; ?> txn · <?php echo $m($result['totals']['fx'], ['strong' => true]); ?><?php if ($fx['view'] !== PS_FXR_BREAKDOWN): ?> · ATV <?php echo $h(psFxFormat($conn, $result['totals']['atv'], $fx['base'])); ?><?php endif; ?></p>
+                <?php echo psFxrSummary($conn, $fx, $result['totals']['fx']); ?>
             <?php endif; ?>
         <?php elseif ($report === 'by_product'): ?>
             <table>
@@ -293,14 +326,15 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                         <td><?php echo $h($row['product']); ?></td>
                         <td><?php echo $h($row['branch']); ?></td>
                         <td><?php echo $h($row['qty']); ?></td>
-                        <td><?php echo $h($row['revenue']); ?></td>
+                        <td class="num"><?php echo $m($row['fx']); ?></td>
                         <td><?php echo (int)$row['txn_count']; ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
             </table>
             <?php if (!empty($result['totals'])): ?>
-                <p class="totals">Filtered total: qty <?php echo $h($result['totals']['qty']); ?> · <?php echo $h($result['totals']['revenue']); ?> · <?php echo (int)$result['totals']['txn_count']; ?> invoices</p>
+                <p class="totals">Filtered total: qty <?php echo $h($result['totals']['qty']); ?> · <?php echo $m($result['totals']['fx'], ['strong' => true]); ?> · <?php echo (int)$result['totals']['txn_count']; ?> invoices</p>
+                <?php echo psFxrSummary($conn, $fx, $result['totals']['fx'], 'Product revenue by currency'); ?>
             <?php endif; ?>
         <?php elseif ($report === 'payments'): ?>
             <p class="hint"><?php echo $h($result['limitation'] ?? ''); ?></p>
@@ -311,28 +345,20 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                     <tr>
                         <td><?php echo $h($row['method']); ?></td>
                         <td><?php echo (int)$row['txn_count']; ?></td>
-                        <td><?php echo $h($row['sale_total']); ?></td>
-                        <td><?php echo $h($row['amount_paid']); ?></td>
+                        <td class="num"><?php echo $m($row['fx']); ?></td>
+                        <td class="num"><?php echo $m($row['fx_paid']); ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
+                <?php if (!empty($result['totals'])): ?>
+                <tfoot><tr><th>Total</th><th><?php echo (int)$result['totals']['txn_count']; ?></th><th class="num"><?php echo $m($result['totals']['fx'], ['strong' => true]); ?></th><th class="num"><?php echo $m($result['totals']['fx_paid'], ['strong' => true]); ?></th></tr></tfoot>
+                <?php endif; ?>
             </table>
+            <?php echo psFxrSummary($conn, $fx, $result['totals']['fx_paid'] ?? [], 'Payments received by currency'); ?>
         <?php elseif ($report === 'by_currency'): ?>
-            <p class="hint">Completed sales in each currency they were sold in. "In <?php echo $h($result['base'] ?? ''); ?>" converts each sale at the rate saved with it; that column adds up to the consolidated revenue shown on the other tabs.</p>
-            <table>
-                <thead><tr><th>Currency</th><th>Txns</th><th>Amount (in that currency)</th><th>In <?php echo $h($result['base'] ?? ''); ?></th></tr></thead>
-                <tbody>
-                <?php foreach ($result['rows'] as $row): ?>
-                    <tr>
-                        <td><?php echo $h($row['currency']); ?></td>
-                        <td><?php echo (int)$row['txn_count']; ?></td>
-                        <td><?php echo $h($row['amount']); ?></td>
-                        <td><?php echo $h($row['base_amount']); ?></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-            <p class="totals">Consolidated: <?php echo $h(($result['totals']['base_amount'] ?? '0.00') . ' ' . ($result['base'] ?? '')); ?> · <?php echo (int)($result['totals']['txn_count'] ?? 0); ?> sales</p>
+            <p class="hint">Completed sales in each currency they were sold in. The <?php echo $h($fx['base']); ?> column converts each sale at the rate saved with it; it adds up to the consolidated revenue on the other tabs.</p>
+            <?php $fx['multi'] = true; echo psFxrSummary($conn, $fx, $result['fx'] ?? [], 'Completed sales by currency'); ?>
+            <?php if (empty($result['rows'])): ?><p class="hint">No sales for these filters.</p><?php endif; ?>
         <?php elseif ($report === 'refunds'): ?>
             <p class="hint"><?php echo $h($result['note'] ?? ''); ?></p>
             <table>
@@ -342,7 +368,7 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                     <tr>
                         <td><?php echo $h($row['status']); ?></td>
                         <td><?php echo (int)$row['count']; ?></td>
-                        <td><?php echo $h($row['amount']); ?></td>
+                        <td class="num"><?php echo $m($row['fx']); ?></td>
                         <td><?php echo !empty($row['is_completed_financial']) ? 'Yes' : 'No'; ?></td>
                     </tr>
                 <?php endforeach; ?>
@@ -351,6 +377,7 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                 <?php endif; ?>
                 </tbody>
             </table>
+            <?php echo psFxrSummary($conn, $fx, $result['processed']['fx'] ?? [], 'Processed refunds by currency'); ?>
         <?php else: ?>
             <table>
                 <thead><tr><th>Invoice</th><th>Date</th><th>Branch</th><th>Cashier</th><th>Status</th><th>Pay</th><th>Total</th></tr></thead>
@@ -363,7 +390,7 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                         <td><?php echo $h($row['cashier']); ?></td>
                         <td><?php echo $h($row['status']); ?></td>
                         <td><?php echo $h($row['payment_method']); ?></td>
-                        <td><?php echo $h($row['total'] . ' ' . ($row['currency'] ?? '')); ?></td>
+                        <td class="num"><?php echo psFxrOne($conn, $fx, $row['fx_currency'], $row['total'], $row['base_total'], ['rate' => $row['fx_rate'], 'ids' => $row['fx_rate_ids'], 'ref' => 'Invoice ' . $row['invoice_number']], ['at' => $row['date']]); ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (empty($result['rows'])): ?>
@@ -372,7 +399,8 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
                 </tbody>
             </table>
             <?php if (!empty($result['totals'])): ?>
-                <p class="totals">Filtered total: <?php echo (int)$result['totals']['txn_count']; ?> txn · <?php echo $h($result['totals']['revenue']); ?></p>
+                <p class="totals">Filtered total: <?php echo (int)$result['totals']['txn_count']; ?> txn · <?php echo $m($result['totals']['fx'], ['strong' => true]); ?></p>
+                <?php echo psFxrSummary($conn, $fx, $result['totals']['fx']); ?>
             <?php endif; ?>
         <?php endif; ?>
 
@@ -389,6 +417,6 @@ $q = static function (array $extra = []) use ($report, $saleClass, $fromDate, $t
             </p>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

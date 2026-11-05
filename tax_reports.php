@@ -39,6 +39,8 @@ $raw = [
     'data_class' => $dataClass,
     'page' => $page,
     'page_size' => 50,
+    'fx_view' => $_GET['fx_view'] ?? '',
+    'fx_cur' => $_GET['fx_cur'] ?? '',
 ];
 
 if ($export === 'csv') {
@@ -64,7 +66,9 @@ if (empty($result['ok'])) {
 }
 $branchOptions = $isAdmin ? psBranchAuthorisedRegisteredNames($conn) : [];
 $codes = psTaxListDistinctCodes($conn, false);
-mysqli_close($conn);
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = $result['fx'] ?? psFxrContext($conn, $_GET);
+$M = static fn(?array $mix, array $o = []): string => psFxrAmount($conn, $fx, $mix ?? [], $o);
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -145,8 +149,10 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
                     <?php endforeach; ?>
                 </select>
             </label>
+            <?php foreach (psFxrQuery($fx) as $fk => $fv): ?><input type="hidden" name="<?php echo $fk; ?>" value="<?php echo $h($fv); ?>"><?php endforeach; ?>
             <button class="ps-btn ps-btn-default" type="submit">Run</button>
         </form>
+        <?php $keep = $_GET; unset($keep['export'], $keep['page']); echo psFxrToolbar($fx, $keep); ?>
     </div>
 </div>
 
@@ -181,10 +187,10 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
                 <td><?php echo $h($row['rate_percent']); ?></td>
                 <td><?php echo $h($row['pricing_mode']); ?></td>
                 <td><?php echo (int)$row['line_count']; ?></td>
-                <td class="num"><?php echo $h($row['taxable_base']); ?></td>
-                <td class="num"><?php echo $h($row['tax_collected']); ?></td>
-                <td class="num"><?php echo $h($row['zero_rated_base']); ?></td>
-                <td class="num"><?php echo $h($row['exempt_turnover']); ?></td>
+                <td class="num"><?php echo $M($row['fx_base'] ?? []); ?></td>
+                <td class="num"><?php echo $M($row['fx_tax'] ?? []); ?></td>
+                <td class="num"><?php echo $M($row['fx_zero'] ?? []); ?></td>
+                <td class="num"><?php echo $M($row['fx_exempt'] ?? []); ?></td>
             </tr>
         <?php endforeach; ?>
         <?php if (!$result['rows']): ?>
@@ -195,13 +201,13 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
             <?php $t = $result['totals']; ?>
             <tr>
                 <th colspan="5">Totals (supported)</th>
-                <th class="num"><?php echo $h($t['taxable_base']); ?></th>
-                <th class="num"><?php echo $h($t['tax_collected']); ?></th>
-                <th class="num"><?php echo $h($t['zero_rated_base']); ?></th>
-                <th class="num"><?php echo $h($t['exempt_turnover']); ?></th>
+                <th class="num"><?php echo $M($t['fx_taxable'] ?? [], ['strong' => true]); ?></th>
+                <th class="num"><?php echo $M($t['fx_tax'] ?? [], ['strong' => true]); ?></th>
+                <th class="num"><?php echo $M($t['fx_zero'] ?? [], ['strong' => true]); ?></th>
+                <th class="num"><?php echo $M($t['fx_exempt'] ?? [], ['strong' => true]); ?></th>
             </tr>
-            <tr><td colspan="6">PROCESSED refund tax adjustments</td><td class="num"><?php echo $h($t['refund_tax']); ?></td><td colspan="2"></td></tr>
-            <tr><td colspan="6">Net tax (collected − refund tax)</td><td class="num"><?php echo $h($t['net_tax']); ?></td><td colspan="2"></td></tr>
+            <tr><td colspan="6">PROCESSED refund tax adjustments</td><td class="num"><?php echo $M($t['fx_refund'] ?? []); ?></td><td colspan="2"></td></tr>
+            <tr><td colspan="6">Net tax (collected − refund tax)</td><td class="num"><?php echo $M($t['fx_net'] ?? [], ['strong' => true]); ?></td><td colspan="2"></td></tr>
         </tfoot>
     </table>
     </div>
@@ -230,9 +236,10 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
                 <td><?php echo $h($row['tax_code']); ?></td>
                 <td><?php echo $h($row['classification']); ?></td>
                 <td><?php echo $h($row['rate_percent']); ?></td>
-                <td class="num"><?php echo $h($row['taxable_amount']); ?></td>
-                <td class="num"><?php echo $h($row['tax_amount']); ?></td>
-                <td class="num"><?php echo $h($row['line_total_incl']); ?></td>
+                <?php $dc = psFxNormalizeCode($row['fx_currency'] ?? '') ?: psFxLegacyCurrency(); ?>
+                <td class="num"><?php echo $h(psFxFormat($conn, $row['taxable_amount'], $dc)); ?></td>
+                <td class="num"><?php echo psFxrOne($conn, $fx, $row['fx_currency'] ?? null, $row['tax_amount'], (float)$row['fx_rate'] > 0 ? number_format(round((float)$row['tax_amount'] / (float)$row['fx_rate'], 2), 2, '.', '') : null, ['rate' => $row['fx_rate'], 'ids' => $row['fx_rate_ids'], 'ref' => 'Invoice ' . $row['invoice_number']]); ?></td>
+                <td class="num"><?php echo $h(psFxFormat($conn, $row['line_total_incl'], $dc)); ?></td>
             </tr>
         <?php endforeach; ?>
         <?php if (!$result['rows']): ?>
@@ -255,9 +262,13 @@ if ($totalPages > 1):
 <?php endif; ?>
 
 <?php
+if ($report === 'summary' && !empty($result['totals']['fx_tax'])) {
+    echo psFxrSummary($conn, $fx, $result['totals']['fx_tax'], 'Tax collected by currency');
+}
 if (function_exists('ps_close')) {
     ps_close();
 }
+mysqli_close($conn);
 ?>
 </body>
 </html>

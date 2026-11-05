@@ -20,6 +20,7 @@
 require_once __DIR__ . '/branch_access.php';
 require_once __DIR__ . '/purchasing_reports.php';
 require_once __DIR__ . '/currency.php';
+require_once __DIR__ . '/fx_report.php';
 
 const PS_REPORT_TZ = 'Africa/Harare';
 

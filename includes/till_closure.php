@@ -737,11 +737,25 @@ function psTillClosureHistory(mysqli $conn, array $filters = []): array
     $where = ["s.status = 'CLOSED'", 's.final_reconciliation_id IS NOT NULL'];
 
     if (psTillClosureIsAdmin()) {
+        // 2026-10-30: an admin sees only their OWN company's branches. "All branches" used to add no
+        // branch condition at all, so a new company's admin saw every other company's closed tills.
+        require_once __DIR__ . '/branch_access.php';
+        $own = psBranchAuthorisedRegisteredNames($conn);
         $branchFilter = trim((string)($filters['branch'] ?? ''));
         if ($branchFilter !== '' && strtolower($branchFilter) !== 'all') {
-            $where[] = 's.branch = ?';
-            $types .= 's';
-            $params[] = $branchFilter;
+            if (!psBranchNameInList($branchFilter, $own)) {
+                return ['ok' => true, 'rows' => []];
+            }
+            $own = [$branchFilter];
+        }
+        $in = psBranchSqlInList($own);
+        if ($in === null) {
+            return ['ok' => true, 'rows' => []];
+        }
+        $where[] = 's.branch IN (' . $in['sql'] . ')';
+        $types .= $in['types'];
+        foreach ($in['params'] as $p) {
+            $params[] = $p;
         }
     } else {
         if ($sessionBranch === '') {
@@ -750,6 +764,15 @@ function psTillClosureHistory(mysqli $conn, array $filters = []): array
         $where[] = 's.branch = ?';
         $types .= 's';
         $params[] = $sessionBranch;
+        require_once __DIR__ . '/operator_scope.php';
+        if (psOperatorCashScoped()) {
+            $posted = psOperatorPostedByCondition($conn, ['s.cashier_email', 's.closed_by', 's.session_name']);
+            $where[] = $posted['sql'];
+            $types .= $posted['types'];
+            foreach ($posted['params'] as $p) {
+                $params[] = $p;
+            }
+        }
     }
 
     $sql = 'SELECT s.id, s.branch, s.register_id, s.cashier_email, s.opening_float, s.opened_at,

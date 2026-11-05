@@ -17,44 +17,44 @@ if (empty($zScope['ok'])) {
 }
 $zBranch = mysqli_real_escape_string($conn, (string)$zScope['branch']);
 
-// Multi-currency (2026-10-20): totals in the company base (each sale at its own rate; older sales are base).
-require_once __DIR__ . '/includes/currency.php';
-$zSum = psFxHasColumn($conn, 'online_sales_ref', 'base_total') ? 'SUM(COALESCE(base_total, CAST(totalz AS DECIMAL(14,2))))' : 'SUM(totalz)';
-$zBaseCur = psFxBase($conn, psFxSessionCompany());
+// Multi-currency: totals per currency first, then the consolidated base total (each sale at its stored rate).
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = psFxrContext($conn, $_GET);
+$zBaseCur = $fx['base'];
 $total_sales = 0;
 $sales_data = [];
 $start_date = $end_date = '';
-
-if (isset($_POST['start_date']) && isset($_POST['end_date'])) {
-    $start_date = mysqli_real_escape_string($conn, $_POST['start_date']);
-    $end_date = mysqli_real_escape_string($conn, $_POST['end_date']);
-
-    $sql = "SELECT cashier, $zSum AS total_sales 
-            FROM online_sales_ref 
-            WHERE date_ BETWEEN '$start_date' AND '$end_date' AND  branch='$zBranch'
-              AND COALESCE(status, '') <> 'CANCELLED'
-            GROUP BY cashier";
+// Dates come from the filter form (POST) or from the currency-view links (GET).
+$zIn = isset($_POST['start_date']) ? $_POST : $_GET;
+$zWhere = "branch = ? AND COALESCE(status, '') <> 'CANCELLED'";
+$zTypes = 's';
+$zParams = [(string)$zScope['branch']];
+if (!empty($zIn['start_date']) && !empty($zIn['end_date'])) {
+    $start_date = (string)$zIn['start_date'];
+    $end_date = (string)$zIn['end_date'];
+    $zWhere .= ' AND date_ BETWEEN ? AND ?';
+    $zTypes .= 'ss';
+    $zParams[] = $start_date;
+    $zParams[] = $end_date;
 } else {
-    $current_date = date('Y-m-d');
-    $sql = "SELECT cashier, $zSum AS total_sales 
-            FROM online_sales_ref 
-            WHERE date_ = '$current_date' AND branch='$zBranch'
-              AND COALESCE(status, '') <> 'CANCELLED'
-            GROUP BY cashier";
+    $zWhere .= ' AND date_ = ?';
+    $zTypes .= 's';
+    $zParams[] = date('Y-m-d');
 }
-
-$result = mysqli_query($conn, $sql);
-
-if ($result) {
-    while ($row = mysqli_fetch_assoc($result)) {
-        $sales_data[] = $row;
-        $total_sales += $row['total_sales'];
-    }
-} else {
+$zWhere .= psFxrCurFilterSql($conn, $fx, 'currency');
+$zg = psFxrGrouped($conn, $fx,
+    'SELECT cashier AS k0, ' . psFxrAggSelectSql($conn, $fx, 'currency', 'CAST(totalz AS DECIMAL(14,2))', 'base_total', 'fx_rate') . '
+     FROM online_sales_ref WHERE ' . $zWhere . ' GROUP BY cashier, currency',
+    $zTypes, $zParams, 1);
+if (empty($zg['ok'])) {
     error_log('z_report: sales query failed');
+    $zg = ['groups' => [], 'total' => ['mix' => []]];
 }
-
-mysqli_close($conn);
+foreach ($zg['groups'] as $grp) {
+    $sales_data[] = ['cashier' => (string)$grp['keys'][0], 'total_sales' => psFxrMoney(psFxrBase($grp['mix'])), 'fx' => $grp['mix']];
+}
+$zTotalMix = $zg['total']['mix'];
+$total_sales = psFxrMoney(psFxrBase($zTotalMix));
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -84,7 +84,7 @@ $branchLabel = trim((string)($_SESSION['selected_branch'] ?? $_SESSION['branch']
     <a class="ps-btn ps-btn-outline ps-btn-sm" href="admin_dashboard.php">Dashboard</a>
     <a class="ps-btn ps-btn-outline ps-btn-sm" href="cashier_sales.php">Cashier Sales</a>
     <button class="ps-btn ps-btn-outline ps-btn-sm" type="button" onclick="window.print()">Print</button>
-    <a class="ps-btn ps-btn-outline ps-btn-sm" href="generate_pdf.php?start_date=<?php echo urlencode($start_date); ?>&amp;end_date=<?php echo urlencode($end_date); ?>">Generate PDF</a>
+    <a class="ps-btn ps-btn-outline ps-btn-sm" href="generate_pdf.php?start_date=<?php echo urlencode($start_date); ?>&amp;end_date=<?php echo urlencode($end_date); ?><?php echo $fx['cur'] !== '' ? '&amp;fx_cur=' . urlencode($fx['cur']) : ''; ?>">Generate PDF</a>
 </div>
 
 <div class="ps-card">
@@ -107,10 +107,11 @@ $branchLabel = trim((string)($_SESSION['selected_branch'] ?? $_SESSION['branch']
     </div>
 </div>
 
+<?php echo psFxrToolbar($fx, array_filter(['start_date' => $start_date, 'end_date' => $end_date])); ?>
 <div class="ps-kpi-grid" aria-label="Totals">
     <div class="ps-kpi">
-        <div class="ps-kpi-label">Total sales (in <?php echo $h($zBaseCur); ?>)</div>
-        <div class="ps-kpi-value"><?php echo $h(ps_money($total_sales, $zBaseCur)); ?></div>
+        <div class="ps-kpi-label">Total sales<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? ' (by currency)' : ' (in ' . $h($zBaseCur) . ')'; ?></div>
+        <div class="ps-kpi-value"><?php echo psFxrAmount($conn, $fx, $zTotalMix); ?></div>
         <?php if ($start_date && $end_date): ?>
             <div class="ps-kpi-sub"><?php echo $h($start_date); ?> → <?php echo $h($end_date); ?></div>
         <?php else: ?>
@@ -151,7 +152,7 @@ $branchLabel = trim((string)($_SESSION['selected_branch'] ?? $_SESSION['branch']
                                     <?php echo $h($data['cashier']); ?>
                                 </a>
                             </td>
-                            <td class="num"><?php echo $h(ps_money($data['total_sales'], $zBaseCur)); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $data['fx']); ?></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
@@ -161,10 +162,11 @@ $branchLabel = trim((string)($_SESSION['selected_branch'] ?? $_SESSION['branch']
     </div>
 </div>
 
+<?php echo psFxrSummary($conn, $fx, $zTotalMix); ?>
 <div class="ps-card ps-chart-card">
     <div class="ps-card-header">
         <h2 class="ps-card-title">Total Sales per Cashier</h2>
-        <p class="ps-card-desc">Theme-aware bar chart of the table totals above.</p>
+        <p class="ps-card-desc">Consolidated in <?php echo $h($zBaseCur); ?> (each sale at its stored rate).</p>
     </div>
     <div class="ps-card-content">
         <?php if (empty($sales_data)): ?>
@@ -292,6 +294,6 @@ $branchLabel = trim((string)($_SESSION['selected_branch'] ?? $_SESSION['branch']
 })();
 </script>
 <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

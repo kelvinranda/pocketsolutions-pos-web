@@ -30,6 +30,14 @@ function psReportExportToolbar(array $query): string
 
 function psReportExportSend(string $format, string $title, string $subtitle, array $sections, string $filename): void
 {
+    if (function_exists('psBranchLabelText')) { // 2026-11-02: shared branch names show without the company suffix
+        $subtitle = psBranchLabelText($subtitle);
+        array_walk_recursive($sections, static function (&$v) {
+            if (is_string($v)) {
+                $v = psBranchLabelText($v);
+            }
+        });
+    }
     $filename = preg_replace('/[^A-Za-z0-9_\-]+/', '_', $filename) ?: 'report';
     $company = trim((string)($_SESSION['the_company'] ?? ''));
     $by = trim((string)($_SESSION['logger'] ?? ''));
@@ -133,7 +141,7 @@ function psReportExportSend(string $format, string $title, string $subtitle, arr
     $mpdf = new \Mpdf\Mpdf(['format' => 'A4-L', 'margin_left' => 10, 'margin_right' => 10, 'margin_top' => 12, 'margin_bottom' => 12, 'tempDir' => sys_get_temp_dir()]);
     $mpdf->SetTitle($title);
     $mpdf->SetFooter($title . '||Page {PAGENO} of {nbpg}');
-    $mpdf->WriteHTML($html);
+    $mpdf->WriteHTML(function_exists('psBranchLabelHtml') ? psBranchLabelHtml($html) : $html); // 2026-11-02 shared branch names
     $mpdf->Output($filename . '.pdf', \Mpdf\Output\Destination::DOWNLOAD);
     exit;
 }

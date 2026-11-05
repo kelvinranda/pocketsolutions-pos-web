@@ -311,41 +311,38 @@ function psReceiptVisibleToUser(array $saleRow): bool
     return $me !== '' && strcasecmp(trim((string)($saleRow['cashier'] ?? '')), $me) === 0;
 }
 
+/** A copy that was actually printed (outcome PRINTED). Returns the number of printed copies of that document. */
 function psReceiptReprintLog(mysqli $conn, string $invoice, string $branch, string $source = 'web',
-                             ?string $company = null, ?string $user = null, ?string $at = null): int
+                             ?string $company = null, ?string $user = null, ?string $at = null,
+                             ?string $approvedBy = null, string $document = 'RECEIPT'): int
 {
-    if (!psCashControlsEnsureSchema($conn)) {
+    require_once __DIR__ . '/receipt_reprint.php';
+    if (!psReprintEnsureSchema($conn)) {
         return 0;
     }
     $company = $company ?? psCashControlsCompany();
     $user = $user ?? psCashControlsUser();
     $now = $at ?? date('Y-m-d H:i:s');
-    $stmt = mysqli_prepare($conn, 'INSERT INTO receipt_reprints (company_name, branch, invoice_number, reprinted_by, reprinted_at, source) VALUES (?, ?, ?, ?, ?, ?)');
+    $document = in_array($document, psReprintDocuments(), true) ? $document : 'RECEIPT';
+    $stmt = mysqli_prepare($conn, "INSERT INTO receipt_reprints (company_name, branch, invoice_number, reprinted_by, reprinted_at, source, approved_by, outcome, document)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'PRINTED', ?)");
     if ($stmt) {
-        mysqli_stmt_bind_param($stmt, 'ssssss', $company, $branch, $invoice, $user, $now, $source);
+        mysqli_stmt_bind_param($stmt, 'ssssssss', $company, $branch, $invoice, $user, $now, $source, $approvedBy, $document);
         mysqli_stmt_execute($stmt);
         mysqli_stmt_close($stmt);
     }
-    $stmt = mysqli_prepare($conn, 'SELECT COUNT(*) AS n FROM receipt_reprints WHERE invoice_number = ?');
-    if (!$stmt) {
-        return 0;
-    }
-    mysqli_stmt_bind_param($stmt, 's', $invoice);
-    mysqli_stmt_execute($stmt);
-    $res = mysqli_stmt_get_result($stmt);
-    $row = $res ? mysqli_fetch_assoc($res) : null;
-    mysqli_stmt_close($stmt);
-    return (int)($row['n'] ?? 0);
+    return psReprintPrintedCount($conn, $invoice, $document);
 }
 
 /** Recent reprints for managers (branch filter optional). */
 function psReceiptReprintList(mysqli $conn, string $from, string $to, string $branch = ''): array
 {
-    if (!psCashControlsEnsureSchema($conn)) {
+    require_once __DIR__ . '/receipt_reprint.php';
+    if (!psReprintEnsureSchema($conn)) {
         return [];
     }
     $company = psCashControlsCompany();
-    $sql = 'SELECT invoice_number, branch, reprinted_by, reprinted_at, source FROM receipt_reprints
+    $sql = 'SELECT invoice_number, branch, reprinted_by, reprinted_at, source, approved_by, outcome, document, note FROM receipt_reprints
             WHERE company_name = ? AND reprinted_at >= ? AND reprinted_at <= ?' . ($branch !== '' ? ' AND branch = ?' : '') . '
             ORDER BY id DESC LIMIT 500';
     $stmt = mysqli_prepare($conn, $sql);

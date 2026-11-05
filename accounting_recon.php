@@ -37,13 +37,14 @@ if (empty($recon['ok'])) {
     $recon = null;
 }
 $branchOptions = $isAdmin ? psBranchAuthorisedRegisteredNames($conn) : [];
-mysqli_close($conn);
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
-$money = static function ($v): string {
-    return number_format((float)$v, 2, '.', ',');
+require_once __DIR__ . '/includes/currency.php';
+$reconBase = psFxBase($conn, psFxSessionCompany());
+$money = static function ($v) use ($conn, $reconBase): string {
+    return htmlspecialchars(psFxFormat($conn, $v ?? 0, $reconBase), ENT_QUOTES, 'UTF-8');
 };
 ?>
 <!DOCTYPE html>
@@ -140,6 +141,6 @@ $money = static function ($v): string {
     </div>
 </section>
 <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

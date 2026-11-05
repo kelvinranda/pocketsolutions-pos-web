@@ -35,6 +35,8 @@ $raw = [
     'from_date' => $fromDate,
     'to_date' => $toDate,
     'branch' => $isAdmin ? $branchFilter : null,
+    'fx_view' => $_GET['fx_view'] ?? '',
+    'fx_cur' => $_GET['fx_cur'] ?? '',
 ];
 $dash = psDashboardReportingBuild($conn, $raw);
 if (empty($dash['ok'])) {
@@ -47,14 +49,15 @@ if (empty($dash['ok'])) {
     }
 }
 
-mysqli_close($conn);
-
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
-$money = static function ($v): string {
-    return number_format((float)$v, 2, '.', ',');
+$fx = $dash['fx'] ?? psFxrContext($conn, $_GET);
+// Base-currency amount (deltas, ATV, cash cards) and currency-aware cells (consolidated with marker / by currency).
+$money = static function ($v) use ($conn, $fx): string {
+    return psFxFormat($conn, $v, $fx['base']);
 };
+$M = static fn(?array $mix, array $o = []): string => psFxrAmount($conn, $fx, $mix ?? [], $o);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -106,6 +109,7 @@ $money = static function ($v): string {
         </div>
     </div>
 
+    <?php echo psFxrToolbar($fx, array_filter(['from_date' => $fromDate, 'to_date' => $toDate, 'branch' => $isAdmin ? $branchFilter : ''], fn($v) => $v !== '')); ?>
     <?php if ($error !== ''): ?>
         <div class="ps-alert ps-alert-destructive" role="alert"><?php echo $h($error); ?></div>
     <?php elseif ($dash): ?>
@@ -154,30 +158,30 @@ $money = static function ($v): string {
             <div class="ps-kpi-grid">
                 <div class="ps-kpi">
                     <div class="ps-kpi-label">Today</div>
-                    <div class="ps-kpi-value"><?php echo $h($money($t['current']['revenue'] ?? 0)); ?></div>
+                    <div class="ps-kpi-value"><?php echo $M($t['current']['fx'] ?? []); ?></div>
                     <div class="ps-kpi-sub"><?php echo (int)($t['current']['txn_count'] ?? 0); ?> txn · ATV <?php echo $h($money($t['current']['atv'] ?? 0)); ?></div>
                     <?php echo $renderDelta($t); ?>
                 </div>
                 <div class="ps-kpi">
                     <div class="ps-kpi-label">This week</div>
-                    <div class="ps-kpi-value"><?php echo $h($money($w['current']['revenue'] ?? 0)); ?></div>
+                    <div class="ps-kpi-value"><?php echo $M($w['current']['fx'] ?? []); ?></div>
                     <div class="ps-kpi-sub"><?php echo (int)($w['current']['txn_count'] ?? 0); ?> txn · ATV <?php echo $h($money($w['current']['atv'] ?? 0)); ?></div>
                     <?php echo $renderDelta($w); ?>
                 </div>
                 <div class="ps-kpi">
                     <div class="ps-kpi-label">This month</div>
-                    <div class="ps-kpi-value"><?php echo $h($money($m['current']['revenue'] ?? 0)); ?></div>
+                    <div class="ps-kpi-value"><?php echo $M($m['current']['fx'] ?? []); ?></div>
                     <div class="ps-kpi-sub"><?php echo (int)($m['current']['txn_count'] ?? 0); ?> txn · ATV <?php echo $h($money($m['current']['atv'] ?? 0)); ?></div>
                     <?php echo $renderDelta($m); ?>
                 </div>
                 <div class="ps-kpi">
                     <div class="ps-kpi-label">Filtered range (completed)</div>
-                    <div class="ps-kpi-value"><?php echo $h($money($rc['revenue'] ?? 0)); ?></div>
+                    <div class="ps-kpi-value"><?php echo $M($rc['fx'] ?? []); ?></div>
                     <div class="ps-kpi-sub"><?php echo (int)($rc['txn_count'] ?? 0); ?> txn · ATV <?php echo $h($money($rc['atv'] ?? 0)); ?></div>
                 </div>
                 <div class="ps-kpi">
                     <div class="ps-kpi-label">Filtered range (legacy recorded)</div>
-                    <div class="ps-kpi-value"><?php echo $h($money($rl['revenue'] ?? 0)); ?></div>
+                    <div class="ps-kpi-value"><?php echo $M($rl['fx'] ?? []); ?></div>
                     <div class="ps-kpi-sub"><?php echo (int)($rl['txn_count'] ?? 0); ?> txn · not modern completed</div>
                 </div>
                 <div class="ps-kpi">
@@ -186,6 +190,7 @@ $money = static function ($v): string {
                     <div class="ps-kpi-sub">Excluded from sales totals</div>
                 </div>
             </div>
+            <?php echo psFxrSummary($conn, $fx, $rc['fx'] ?? [], 'Filtered range by currency (completed)'); ?>
                 </div>
             </div>
         </section>
@@ -207,8 +212,8 @@ $money = static function ($v): string {
                             <tr>
                                 <td><?php echo $h($row['branch']); ?></td>
                                 <td><?php echo (int)$row['txn_count']; ?></td>
-                                <td><?php echo $h($money($row['revenue'])); ?></td>
-                                <td><?php echo $h($money($row['atv'])); ?></td>
+                                <td class="num"><?php echo $M($row['fx'] ?? []); ?></td>
+                                <td class="num"><?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '—' : $h($money($row['atv'])); ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -229,8 +234,8 @@ $money = static function ($v): string {
                             <tr>
                                 <td><?php echo $h($row['branch']); ?></td>
                                 <td><?php echo (int)$row['txn_count']; ?></td>
-                                <td><?php echo $h($money($row['revenue'])); ?></td>
-                                <td><?php echo $h($money($row['atv'])); ?></td>
+                                <td class="num"><?php echo $M($row['fx'] ?? []); ?></td>
+                                <td class="num"><?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '—' : $h($money($row['atv'])); ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -258,8 +263,8 @@ $money = static function ($v): string {
                             <tr>
                                 <td><?php echo $h($row['method']); ?></td>
                                 <td><?php echo (int)$row['txn_count']; ?></td>
-                                <td><?php echo $h($money($row['sale_total'])); ?></td>
-                                <td><?php echo $h($money($row['amount_paid'])); ?></td>
+                                <td class="num"><?php echo $M($row['fx'] ?? []); ?></td>
+                                <td class="num"><?php echo $M($row['fx_paid'] ?? []); ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -289,7 +294,7 @@ $money = static function ($v): string {
                             <tr>
                                 <td><?php echo $h($row['status']); ?></td>
                                 <td><?php echo (int)$row['count']; ?></td>
-                                <td><?php echo $h($money($row['amount'])); ?></td>
+                                <td class="num"><?php echo $M($row['fx'] ?? []); ?></td>
                                 <td><?php echo !empty($row['is_completed_financial']) ? 'Yes (PROCESSED)' : 'No'; ?></td>
                             </tr>
                         <?php endforeach; ?>
@@ -327,15 +332,15 @@ $money = static function ($v): string {
                     </div>
                 </div>
             </div>
+            <?php // 2026-11-04 Dusk: valuation note moved out of the Stock value box (it stretched the row); same pattern as Cash / till. ?>
+            <?php if (trim((string)($ia['valuation_note'] ?? '')) !== ''): ?>
+                <p class="ps-page-lead"><?php echo $h($ia['valuation_note']); ?></p>
+            <?php endif; ?>
             <p class="ps-link-row"><a class="ps-btn ps-btn-outline ps-btn-sm" href="inventory_reports.php">Open inventory reports</a></p>
         </section>
 
         <section class="ps-section">
             <h2>Cash / till</h2>
-            <?php // 2026-11-04 Dusk: valuation note moved out of the Stock value box (it stretched the row); same pattern as Cash / till. ?>
-            <?php if (trim((string)($ia['valuation_note'] ?? '')) !== ''): ?>
-                <p class="ps-page-lead"><?php echo $h($ia['valuation_note']); ?></p>
-            <?php endif; ?>
             <?php $cash = $dash['cash'] ?? null; ?>
             <?php if ($cash && !empty($cash['ok']) && is_array($cash['cards'] ?? null)): ?>
                 <?php $cc = $cash['cards']; ?>
@@ -382,7 +387,7 @@ $money = static function ($v): string {
                                 <td><?php echo $h($row['cashier']); ?></td>
                                 <td><?php echo $h($row['status']); ?></td>
                                 <td><?php echo $h($row['payment_method']); ?></td>
-                                <td><?php echo $h($money($row['total'])); ?></td>
+                                <td class="num"><?php echo psFxrOne($conn, $fx, $row['fx_currency'] ?? null, $row['total'], $row['base_total'] ?? null, ['rate' => $row['fx_rate'] ?? '', 'ids' => $row['fx_rate_ids'] ?? '', 'ref' => 'Invoice ' . $row['invoice_number']]); ?></td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -406,6 +411,6 @@ $money = static function ($v): string {
             </div>
         </section>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

@@ -74,6 +74,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
             mysqli_stmt_close($stmt);
 
             if ($ok && $hasBranchCompany) {
+                // 2026-11-02: the name may already be used by another company; then the stored key is NAME~COMPANY.
+                $bk = psBranchKeyFor($conn, $branch, $name);
+                $ok = !empty($bk['ok']);
+                if ($ok) {
+                    $branch = $bk['key'];
+                }
+            }
+            if ($ok && $hasBranchCompany) {
                 $stmt = mysqli_prepare($conn, 'INSERT INTO branchies (branch_name, date_created, company_name) VALUES (?, ?, ?)');
                 mysqli_stmt_bind_param($stmt, 'sss', $branch, $now, $name);
                 $ok = mysqli_stmt_execute($stmt);

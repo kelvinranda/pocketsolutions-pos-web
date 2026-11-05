@@ -697,30 +697,49 @@ function psCashReconciliationHistory(mysqli $conn, array $filters = []): array
     $offset = (int)($filters['offset'] ?? 0);
     $limit = max(1, min(200, $limit));
     $offset = max(0, $offset);
+    // Till / Supervisor: only the counts they posted. Session ownership alone leaks other
+    // cashiers on the same till (cashier_id / session_name prefix match).
+    require_once __DIR__ . '/operator_scope.php';
+    $ownSql = '';
+    $who = [];
+    if (psOperatorCashScoped()) {
+        $me = trim(psOperatorUser());
+        $email = trim((string)(tillCurrentCashier($conn)['email'] ?? ''));
+        $who = array_values(array_unique(array_filter([$me, $email], static fn($v) => $v !== '')));
+        if ($who === []) {
+            return ['ok' => true, 'rows' => [], 'branch' => $branchFilter, 'all_branches' => $allBranches];
+        }
+        $ownSql = ' AND LOWER(TRIM(reconciled_by)) IN (' . implode(',', array_fill(0, count($who), 'LOWER(?)')) . ')';
+    }
+    $whoTypes = str_repeat('s', count($who));
 
     if ($allBranches) {
+        require_once __DIR__ . '/product_master.php';
         $sql = 'SELECT id, till_session_id, branch, reconciled_at, expected_cash, counted_cash, variance,
                        status, lifecycle, notes, reconciled_by, created_at' . psCashReconciliationCurrencySelect($conn) . '
                 FROM cash_reconciliations
+                WHERE ' . psCompanyBranchesInSql($conn, 'branch') . $ownSql . '
                 ORDER BY reconciled_at DESC, id DESC
                 LIMIT ? OFFSET ?';
         $stmt = mysqli_prepare($conn, $sql);
         if (!$stmt) {
             return ['ok' => false, 'error' => 'Reconciliation history could not be loaded.'];
         }
-        mysqli_stmt_bind_param($stmt, 'ii', $limit, $offset);
+        $bind = array_merge($who, [$limit, $offset]);
+        mysqli_stmt_bind_param($stmt, $whoTypes . 'ii', ...$bind);
     } else {
         $sql = 'SELECT id, till_session_id, branch, reconciled_at, expected_cash, counted_cash, variance,
                        status, lifecycle, notes, reconciled_by, created_at' . psCashReconciliationCurrencySelect($conn) . '
                 FROM cash_reconciliations
-                WHERE branch = ?
+                WHERE branch = ?' . $ownSql . '
                 ORDER BY reconciled_at DESC, id DESC
                 LIMIT ? OFFSET ?';
         $stmt = mysqli_prepare($conn, $sql);
         if (!$stmt) {
             return ['ok' => false, 'error' => 'Reconciliation history could not be loaded.'];
         }
-        mysqli_stmt_bind_param($stmt, 'sii', $branchFilter, $limit, $offset);
+        $bind = array_merge([$branchFilter], $who, [$limit, $offset]);
+        mysqli_stmt_bind_param($stmt, 's' . $whoTypes . 'ii', ...$bind);
     }
     mysqli_stmt_execute($stmt);
     $result = mysqli_stmt_get_result($stmt);

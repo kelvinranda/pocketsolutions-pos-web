@@ -446,6 +446,20 @@ function psQuoteGet(mysqli $conn, int $id, string $company, bool $forUpdate = fa
     if (!$q) {
         return null;
     }
+    require_once __DIR__ . '/operator_scope.php';
+    if (psOperatorIsScoped()) {
+        $by = strtolower(trim((string)($q['created_by'] ?? '')));
+        $ok = false;
+        foreach (psOperatorIdentities($conn) as $w) {
+            if ($by !== '' && strcasecmp($by, $w) === 0) {
+                $ok = true;
+                break;
+            }
+        }
+        if (!$ok) {
+            return null;
+        }
+    }
     $l = mysqli_prepare($conn, 'SELECT * FROM quotation_lines WHERE quotation_id = ? ORDER BY line_no');
     mysqli_stmt_bind_param($l, 'i', $id);
     mysqli_stmt_execute($l);
@@ -492,6 +506,10 @@ function psQuoteList(mysqli $conn, string $company, array $branches, string $sea
         $like = '%' . str_replace(['%', '_'], '', $search) . '%';
         $types .= 'sssss';
         array_push($params, $like, $like, $like, $like, $search);
+    }
+    require_once __DIR__ . '/operator_scope.php';
+    if (psOperatorIsScoped()) {
+        $where .= ' AND ' . psOperatorPostedBySql($conn, ['created_by']);
     }
     $types .= 'i';
     $params[] = $limit;

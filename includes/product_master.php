@@ -629,7 +629,7 @@ function psActiveGoodsForSale(mysqli $conn, string $productId, string $branch, s
     }
     mysqli_stmt_close($stmt);
     if (count($rows) === 0) {
-        return ['ok' => false, 'error' => 'A product in the cart is not available.'];
+        return ['ok' => false, 'error' => 'A product in the cart (code ' . $productId . ') is no longer available — it may have been deleted. Remove it from the cart, then continue.'];
     }
     if (count($rows) !== 1) {
         return ['ok' => false, 'error' => 'A product in the cart is not available.'];
@@ -637,7 +637,8 @@ function psActiveGoodsForSale(mysqli $conn, string $productId, string $branch, s
     $product = $rows[0];
     $rowStatus = strtoupper(trim((string)($product['status'] ?? '')));
     if ($rowStatus !== PS_PRODUCT_STATUS_ACTIVE) {
-        return ['ok' => false, 'error' => 'That product is inactive and cannot be sold.'];
+        // 2026-10-31: name it, so the cashier knows which line to remove (a screen opened before it was deactivated).
+        return ['ok' => false, 'error' => trim((string)($product['product'] ?? 'A product')) . ' is no longer sold (it was deactivated). Remove it from the cart, then continue.'];
     }
     return ['ok' => true, 'row' => $product];
 }
@@ -795,8 +796,43 @@ function psEnsureProductAuditSchema(mysqli $conn): bool
         error_log('product audit schema was not created');
         return false;
     }
+    // 2026-10-24: optional reason (price edits from the Items page require one).
+    $col = mysqli_query($conn, "SHOW COLUMNS FROM product_audit LIKE 'reason'");
+    if ($col && mysqli_num_rows($col) === 0 && !mysqli_query($conn, 'ALTER TABLE product_audit ADD COLUMN reason VARCHAR(250) NULL')) {
+        error_log('product audit reason column was not added');
+        return false;
+    }
     $ready = true;
     return true;
+}
+
+/**
+ * 2026-10-24 — Items page / POS catalogue: one index serves "this branch, this status, ordered by name".
+ * DDL: call outside a transaction.
+ */
+function psEnsureGoodsListIndex(mysqli $conn): bool
+{
+    static $ready = false;
+    if ($ready) {
+        return true;
+    }
+    $res = mysqli_query($conn, "SHOW INDEX FROM goods WHERE Key_name = 'idx_goods_branch_status_product'");
+    if ($res && mysqli_num_rows($res) > 0) {
+        return $ready = true;
+    }
+    if (function_exists('stockMovementInTransaction') && stockMovementInTransaction($conn)) {
+        return false;
+    }
+    if (!psEnsureGoodsStatus($conn)) {
+        return false;
+    }
+    $ok = mysqli_query($conn, 'ALTER TABLE goods ADD INDEX idx_goods_branch_status_product (branch, status, product)')
+        || mysqli_errno($conn) === 1061
+        || mysqli_query($conn, 'ALTER TABLE goods ADD INDEX idx_goods_branch_status_product (branch(100), status, product(100))');
+    if (!$ok) {
+        error_log('goods list index was not added');
+    }
+    return $ready = (bool)$ok;
 }
 
 /**
@@ -939,7 +975,8 @@ function psProductAuditInsertRow(
     $newValue,
     string $changedBy,
     string $source,
-    string $changedAt = ''
+    string $changedAt = '',
+    ?string $reason = null
 ): bool {
     if (!psEnsureProductAuditSchema($conn)) {
         return false;
@@ -967,9 +1004,19 @@ function psProductAuditInsertRow(
     }
     $oldStore = $oldValue === null ? null : (string)$oldValue;
     $newStore = $newValue === null ? null : (string)$newValue;
+    $reason = ($reason === null || trim($reason) === '') ? null : substr(trim($reason), 0, 250);
+    static $hasReason = null;
+    if ($hasReason === null) {
+        $rc = mysqli_query($conn, "SHOW COLUMNS FROM product_audit LIKE 'reason'");
+        $hasReason = $rc && mysqli_num_rows($rc) > 0;
+    }
     $stmt = mysqli_prepare(
         $conn,
-        'INSERT INTO product_audit
+        $hasReason
+            ? 'INSERT INTO product_audit
+         (product_id, goods_id, branch, action, field_name, old_value, new_value, changed_by, changed_at, source, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            : 'INSERT INTO product_audit
          (product_id, goods_id, branch, action, field_name, old_value, new_value, changed_by, changed_at, source)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
@@ -977,20 +1024,11 @@ function psProductAuditInsertRow(
         error_log('product audit insert prepare failed');
         return false;
     }
-    mysqli_stmt_bind_param(
-        $stmt,
-        'sissssssss',
-        $productId,
-        $goodsId,
-        $branch,
-        $action,
-        $fieldName,
-        $oldStore,
-        $newStore,
-        $changedBy,
-        $changedAt,
-        $source
-    );
+    $bind = [$productId, $goodsId, $branch, $action, $fieldName, $oldStore, $newStore, $changedBy, $changedAt, $source];
+    if ($hasReason) {
+        $bind[] = $reason;
+    }
+    mysqli_stmt_bind_param($stmt, 'sissssssss' . ($hasReason ? 's' : ''), ...$bind);
     $ok = mysqli_stmt_execute($stmt);
     if (!$ok) {
         error_log('product audit insert failed');
@@ -1033,7 +1071,8 @@ function psProductAuditRecordChanges(mysqli $conn, array $meta, array $changes):
             array_key_exists('new_value', $change) ? $change['new_value'] : null,
             $changedBy,
             $source,
-            $changedAt
+            $changedAt,
+            isset($meta['reason']) ? (string)$meta['reason'] : null
         )) {
             return false;
         }
@@ -1183,7 +1222,7 @@ function psProductAuditFetchHistory(mysqli $conn, array $filters = []): array
     $types = str_repeat('s', count($branches));
     $values = $branches;
     $sql = 'SELECT id, product_id, goods_id, branch, action, field_name, old_value, new_value,
-                   changed_by, changed_at, source
+                   changed_by, changed_at, source, reason
             FROM product_audit
             WHERE branch IN (' . $placeholders . ')';
     if ($productId !== '') {
@@ -1228,3 +1267,132 @@ function psProductAuditFetchHistory(mysqli $conn, array $filters = []): array
     return ['ok' => true, 'rows' => $rows];
 }
 
+
+
+// ------------------------------------------------------------------------------------------------
+// 2026-10-31 — Delete a product (Admin). A product that was never used at this branch (no sales,
+// receipts, stock movements, transfers, orders, returns, quotations or refunds, and no stock) is
+// removed. A product with any history is DEACTIVATED instead, so reports and receipts stay correct.
+// Same rule in the mobile API (admin_products.php action=delete).
+// ------------------------------------------------------------------------------------------------
+const PS_PRODUCT_AUDIT_ACTION_DELETE = 'DELETE';
+
+/**
+ * Where a product is still referenced at a branch.
+ *
+ * @return list<string> human labels, e.g. ["12 sales lines", "stock on hand"]
+ */
+function psProductUsage(mysqli $conn, string $productId, string $branch, ?array $row = null): array
+{
+    $productId = trim($productId);
+    $used = [];
+    if ($productId === '') {
+        return $used;
+    }
+    $checks = [
+        ['online_sales', 'branch', 'sales line'],
+        ['goods_receipts', 'branch', 'goods received line'],
+        ['stock_movements', 'branch', 'stock movement'],
+        ['movements_receipts', 'branch|sending_branch', 'transfer line'],
+        ['purchase_order_lines', 'branch', 'purchase order line'],
+        ['purchase_return_lines', 'branch', 'purchase return line'],
+        ['quotation_lines', '', 'quotation line'],
+        ['sale_refund_request_lines', '', 'refund line'],
+    ];
+    foreach ($checks as [$table, $branchCols, $label]) {
+        $t = mysqli_real_escape_string($conn, $table);
+        $exists = @mysqli_query($conn, "SHOW TABLES LIKE '$t'");
+        if (!$exists || mysqli_num_rows($exists) === 0) {
+            continue;
+        }
+        $where = 'product_id = ?';
+        $types = 's';
+        $params = [$productId];
+        if ($branchCols !== '') {
+            $or = [];
+            foreach (explode('|', $branchCols) as $col) {
+                $or[] = "`$col` = ?";
+                $types .= 's';
+                $params[] = $branch;
+            }
+            $where .= ' AND (' . implode(' OR ', $or) . ')';
+        }
+        $stmt = mysqli_prepare($conn, "SELECT COUNT(*) FROM `$table` WHERE $where");
+        if (!$stmt) {
+            // Cannot check → treat as used (never delete what we could not verify).
+            $used[] = $label . 's (could not check)';
+            continue;
+        }
+        mysqli_stmt_bind_param($stmt, $types, ...$params);
+        mysqli_stmt_execute($stmt);
+        $n = 0;
+        mysqli_stmt_bind_result($stmt, $n);
+        mysqli_stmt_fetch($stmt);
+        mysqli_stmt_close($stmt);
+        if ((int)$n > 0) {
+            $used[] = (int)$n . ' ' . $label . ((int)$n === 1 ? '' : 's');
+        }
+    }
+    if ($row !== null && abs((float)($row['quantity'] ?? 0)) > 0.0005) {
+        $used[] = 'opening stock';
+    }
+    return $used;
+}
+
+/**
+ * @return array{ok:bool,error?:string,mode?:string,reason?:string}
+ *         mode = 'deleted' | 'deactivated' | 'already_inactive'
+ */
+function psDeleteGoodsById(mysqli $conn, int $goodsId, string $branch): array
+{
+    $branch = trim($branch);
+    if ($branch === '' || !psProductBranchIsValid($conn, $branch)) {
+        return ['ok' => false, 'error' => 'That branch is not available.'];
+    }
+    $row = psGoodsRowById($conn, $goodsId, $branch);
+    if (!$row) {
+        return ['ok' => false, 'error' => 'Product was not found on the selected branch.'];
+    }
+    $company = session_status() === PHP_SESSION_ACTIVE ? trim((string)($_SESSION['the_company'] ?? '')) : '';
+    $rowCompany = trim((string)($row['company_name'] ?? ''));
+    if ($company !== '' && $rowCompany !== '' && $rowCompany !== $company) {
+        return ['ok' => false, 'error' => 'Product was not found on the selected branch.'];
+    }
+    $productId = trim((string)($row['product_id'] ?? ''));
+    $name = trim((string)($row['product'] ?? ''));
+    $used = psProductUsage($conn, $productId, $branch, $row);
+    require_once __DIR__ . '/security.php';
+    if ($used) {
+        $reason = 'It has history at ' . $branch . ' (' . implode(', ', $used) . '), so it was deactivated instead of deleted.';
+        if (!psProductStatusIsActive((string)($row['status'] ?? PS_PRODUCT_STATUS_ACTIVE))) {
+            return ['ok' => true, 'mode' => 'already_inactive', 'reason' => 'It has history at ' . $branch . ' (' . implode(', ', $used) . '), so it cannot be deleted. It is already inactive.'];
+        }
+        $st = psSetGoodsStatusById($conn, $goodsId, $branch, PS_PRODUCT_STATUS_INACTIVE);
+        if (empty($st['ok'])) {
+            return ['ok' => false, 'error' => $st['error'] ?? 'Product could not be deactivated.'];
+        }
+        psSecurityAudit($conn, 'PRODUCT_DEACTIVATE', ['target_type' => 'product', 'target_id' => $productId,
+            'summary' => 'Delete requested for ' . $name . ' at ' . $branch . ': deactivated (has ' . implode(', ', $used) . ')']);
+        return ['ok' => true, 'mode' => 'deactivated', 'reason' => $reason];
+    }
+    psEnsureProductAuditSchema($conn);
+    $changedBy = psSessionProductAuditUser();
+    $stmt = mysqli_prepare($conn, 'DELETE FROM goods WHERE id = ? AND branch = ? LIMIT 1');
+    if (!$stmt) {
+        return ['ok' => false, 'error' => 'Product could not be deleted.'];
+    }
+    mysqli_stmt_bind_param($stmt, 'is', $goodsId, $branch);
+    $ok = mysqli_stmt_execute($stmt) && mysqli_stmt_affected_rows($stmt) === 1;
+    mysqli_stmt_close($stmt);
+    if (!$ok) {
+        return ['ok' => false, 'error' => 'Product could not be deleted.'];
+    }
+    psProductAuditRecordChanges($conn, [
+        'product_id' => $productId, 'goods_id' => $goodsId, 'branch' => $branch,
+        'action' => PS_PRODUCT_AUDIT_ACTION_DELETE, 'source' => PS_PRODUCT_AUDIT_SOURCE_UI, 'changed_by' => $changedBy,
+    ], [['field_name' => 'product', 'old_value' => $name, 'new_value' => null]]);
+    psSecurityAudit($conn, 'PRODUCT_DELETE', ['target_type' => 'product', 'target_id' => $productId,
+        'summary' => 'Deleted ' . $name . ' (' . $productId . ') at ' . $branch . ' — it had never been used',
+        'before' => ['product' => $name, 'price' => $row['price'] ?? null, 'cost_price' => $row['cost_price'] ?? null, 'category' => $row['category'] ?? null]]);
+    return ['ok' => true, 'mode' => 'deleted'];
+}

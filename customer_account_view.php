@@ -217,7 +217,7 @@ if ($account) {
 }
 
 $acctCurrencyLabel = $account ? psCustomerAccountRowCurrency($conn, $account) : '';
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 
 function psAcctViewHistQuery(int $id, array $overrides = []): string
 {
@@ -312,9 +312,9 @@ function psAcctViewHistQuery(int $id, array $overrides = []): string
                     <?php endif; ?>
                 </dd>
                 <dt>Ledger balance</dt>
-                <dd class="num mono"><?php echo htmlspecialchars($balance, ENT_QUOTES, 'UTF-8'); ?></dd>
+                <dd class="num mono"><?php echo htmlspecialchars(psFxFormat($conn, $balance, $acctCurrencyLabel ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?></dd>
                 <dt>Credit limit</dt>
-                <dd class="num"><?php echo htmlspecialchars(number_format((float)$account['credit_limit'], 2, '.', ''), ENT_QUOTES, 'UTF-8'); ?>
+                <dd class="num"><?php echo htmlspecialchars(psFxFormat($conn, $account['credit_limit'], $acctCurrencyLabel ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?>
                     <?php if ((float)$account['credit_limit'] <= 0): ?>
                         <span class="hint"> (no credit facility)</span>
                     <?php endif; ?>
@@ -548,7 +548,7 @@ function psAcctViewHistQuery(int $id, array $overrides = []): string
                             <td class="mono"><?php echo htmlspecialchars((string)$pr['payment_number'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$pr['payment_date'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars(psCustomerAccountPaymentMethodLabel($pr['payment_method']), ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$pr['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $pr['amount'], $acctCurrencyLabel ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td class="num"><?php echo htmlspecialchars((string)$pr['allocated'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td class="num"><?php echo htmlspecialchars((string)$pr['unallocated'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$pr['status'], ENT_QUOTES, 'UTF-8'); ?></td>
@@ -659,6 +659,6 @@ function psAcctViewHistQuery(int $id, array $overrides = []): string
             <?php endif; ?>
         </section>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

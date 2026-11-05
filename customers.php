@@ -7,6 +7,10 @@
  * write customer_master_id. Do not delete the existing legacy rows.
  */
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
+// 2026-11-02: the legacy `customers` table has no company, so it showed every company's customers (even
+// signed out). Retired: everyone goes to the company's own customer list. Legacy rows stay in the database.
+header('Location: customers_list.php');
+exit;
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/security.php';
 mysqli_report(MYSQLI_REPORT_OFF);

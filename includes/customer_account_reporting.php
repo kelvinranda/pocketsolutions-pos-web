@@ -478,6 +478,9 @@ function psCustomerAccountStatement(mysqli $conn, int $accountId, array $filters
             'credit_limit' => number_format((float)$account['credit_limit'], 2, '.', ''),
             'current_balance' => $currentBalance,
             'available_credit' => $availableCredit,
+            // Multi-currency: the account's single currency (NULL on accounts opened before currencies = base, legacy).
+            'currency' => psCustomerAccountRowCurrency($conn, $account),
+            'currency_legacy' => trim((string)($account['currency'] ?? '')) === '',
         ],
         'opening_balance' => $opening,
         'closing_balance' => $closing,
@@ -710,7 +713,7 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
     $sql = 'SELECT l.id AS ledger_id, l.customer_account_id, l.entry_date, l.debit, l.reference_id AS invoice_number,
                    a.account_number, a.status AS account_status, a.customer_master_id, a.credit_limit,
                    c.customer_code, c.first_name, c.last_name, c.business_name, c.customer_type, c.status AS customer_status,
-                   osr.branch AS sale_branch
+                   osr.branch AS sale_branch, osr.currency AS sale_currency, osr.fx_rate AS sale_fx_rate
             FROM customer_account_ledger l
             INNER JOIN customer_accounts a ON a.id = l.customer_account_id
             INNER JOIN customer_master c ON c.id = a.customer_master_id
@@ -817,6 +820,9 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
     $acctCur = [];
     $fxToBase = [];
     $fxMissing = [];
+    require_once __DIR__ . '/fx_report.php';
+    $ageCtx = psFxrContext($conn, []);
+    $ageMix = ['total' => []];
     $byCurrency = [];
     $byAccount = [];
     $grand = [
@@ -847,24 +853,27 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
         }
         $bucket = psCustomerReceivablesAgeingBucketForDays($days);
 
-        // Multi-currency (2026-10-20): each account is kept in its own currency. Grand totals are in the company base
-        // at today's rate (receivables are an open balance, so they are valued at the current rate); per-currency
-        // totals are kept as well.
+        // Multi-currency (2026-10-21): each account is kept in its own currency (= the currency of its credit sales).
+        // Base totals use each sale's STORED rate (historical; never re-valued at a later rate). A sale with no stored
+        // rate in a non-base currency is left out of the base totals and flagged.
         if (!isset($acctCur[$aid])) {
             $acctRow = psCustomerAccountById($conn, $aid);
             $acctCur[$aid] = $acctRow ? psCustomerAccountRowCurrency($conn, $acctRow) : $fxBase;
         }
         $cur = $acctCur[$aid];
-        if (!isset($fxToBase[$cur])) {
-            $rr = psFxRate($conn, psFxSessionCompany(), $cur, $fxBase, $asAt . ' 23:59:59');
-            $fxToBase[$cur] = !empty($rr['ok']) ? $rr['frac'] : null;
-            if (empty($rr['ok'])) {
-                $fxMissing[$cur] = (string)$rr['error'];
-            }
+        $saleRate = (float)($sale['sale_fx_rate'] ?? 0);
+        $saleCur = psFxNormalizeCode($sale['sale_currency'] ?? '');
+        if ($cur === $fxBase || ($saleCur === '' && $cur === $fxBase)) {
+            $outstandingBase = $outstanding;
+        } elseif ($saleRate > 0) {
+            $outstandingBase = round($outstanding / $saleRate, 2);
+        } else {
+            $outstandingBase = 0.0;
+            $fxMissing[$cur] = 'invoice ' . $invoice . ' has no stored exchange rate';
         }
-        $outstandingBase = $fxToBase[$cur] !== null
-            ? psFxConvertCents((int)round($outstanding * 100), $fxToBase[$cur], psFxDecimals($conn, $fxBase)) / 100
-            : 0.0;
+        $ageMix[$bucket] = $ageMix[$bucket] ?? [];
+        psFxrAdd($ageMix[$bucket], $ageCtx, $cur, number_format($outstanding, 2, '.', ''), ($cur === $fxBase || $saleRate > 0) ? number_format($outstandingBase, 2, '.', '') : null, ['rate' => (string)($sale['sale_fx_rate'] ?? '')]);
+        psFxrAdd($ageMix['total'], $ageCtx, $cur, number_format($outstanding, 2, '.', ''), ($cur === $fxBase || $saleRate > 0) ? number_format($outstandingBase, 2, '.', '') : null, ['rate' => (string)($sale['sale_fx_rate'] ?? '')]);
         if (!isset($byCurrency[$cur])) {
             $byCurrency[$cur] = psCustomerReceivablesAgeingEmptyBuckets();
             foreach ($byCurrency[$cur] as $bk => $v) {
@@ -999,6 +1008,7 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
         }
     }
     $balanceTotal = 0.0;
+    $balMix = [];
     $bStmt = mysqli_prepare($conn, $balanceScopeSql);
     if ($bStmt) {
         if ($bTypes !== '') {
@@ -1015,15 +1025,11 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
             if ($bal['ok']) {
                 $bAcct = psCustomerAccountById($conn, (int)$bRow['id']);
                 $bCur = $bAcct ? psCustomerAccountRowCurrency($conn, $bAcct) : $fxBase;
+                // 2026-10-21: an account balance mixes many transactions at different stored rates, so it is totalled
+                // per account currency only (never converted at a later rate). Base total = base-currency accounts.
+                psFxrAdd($balMix, $ageCtx, $bCur, number_format((float)$bal['balance'], 2, '.', ''), $bCur === $fxBase ? number_format((float)$bal['balance'], 2, '.', '') : null);
                 if ($bCur === $fxBase) {
                     $balanceTotal += (float)$bal['balance'];
-                } else {
-                    $br = psFxRate($conn, psFxSessionCompany(), $bCur, $fxBase, $asAt . ' 23:59:59');
-                    if (!empty($br['ok'])) {
-                        $balanceTotal += psFxConvertCents((int)round((float)$bal['balance'] * 100), $br['frac'], psFxDecimals($conn, $fxBase)) / 100;
-                    } else {
-                        $fxMissing[$bCur] = (string)$br['error'];
-                    }
                 }
             }
         }
@@ -1049,11 +1055,13 @@ function psCustomerReceivablesAgeing(mysqli $conn, array $filters = []): array
         'totals_by_currency' => $totalsByCurrency,
         'fx_missing' => $fxMissing,
         'fx_note' => count($totalsByCurrency) > 1 || array_keys($totalsByCurrency) !== [$fxBase]
-            ? 'Accounts are listed in their own currencies. Grand totals are in ' . $fxBase . ' at the rate on the as-at date.'
+            ? 'Accounts are listed in their own currencies. Grand totals are in ' . $fxBase . ': each open sale at the exchange rate stored with that sale (never re-valued). Account balances mix many transactions, so they are totalled per account currency only.'
             : '',
+        'fx_buckets' => $ageMix,
         'management' => [
             'total_credit_sales_outstanding' => $totals['total'],
             'total_customer_account_balance' => number_format($balanceTotal, 2, '.', ''),
+            'fx_balance' => $balMix,
             'note' => $mgmtNote,
         ],
         'branch' => [

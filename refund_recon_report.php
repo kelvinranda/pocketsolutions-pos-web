@@ -59,6 +59,17 @@ if ($signedIn) {
     $error = 'Please sign in to view refund reconciliation reporting.';
 }
 
+// 2026-10-21: a finding compares amounts of ONE sale / refund, so they are in that sale's currency (never summed).
+require_once __DIR__ . '/includes/fx_report.php';
+$rrCur = [];
+$rrInv = array_values(array_unique(array_filter(array_map(fn($r) => (string)($r['invoice_number'] ?? ''), $result['rows'] ?? []))));
+if ($rrInv) {
+    $in = implode(',', array_map(fn($v) => "'" . mysqli_real_escape_string($conn, $v) . "'", $rrInv));
+    $cres = mysqli_query($conn, "SELECT invoice_number, currency FROM online_sales_ref WHERE invoice_number IN ($in)");
+    while ($cres && ($cr = mysqli_fetch_assoc($cres))) {
+        $rrCur[(string)$cr['invoice_number']] = psFxNormalizeCode($cr['currency'] ?? '') ?: psFxLegacyCurrency();
+    }
+}
 mysqli_close($conn);
 
 $sum = $result['summary'] ?? [];
@@ -229,11 +240,12 @@ $page = (int)($pag['page'] ?? 1);
                         $qtyAct = $row['qty_actual'] !== null && $row['qty_actual'] !== ''
                             ? (string)$row['qty_actual']
                             : 'Not available';
+                        $rc = $rrCur[(string)($row['invoice_number'] ?? '')] ?? '';
                         $amtExp = $row['amount_expected'] !== null && $row['amount_expected'] !== ''
-                            ? (string)$row['amount_expected']
+                            ? (string)$row['amount_expected'] . ($rc !== '' ? ' ' . $rc : '')
                             : ($sev === 'INCONCLUSIVE' ? 'Inconclusive' : 'Not available');
                         $amtAct = $row['amount_actual'] !== null && $row['amount_actual'] !== ''
-                            ? (string)$row['amount_actual']
+                            ? (string)$row['amount_actual'] . ($rc !== '' ? ' ' . $rc : '')
                             : 'Not available';
                         $detailQs = http_build_query([
                             'key' => (string)$row['discrepancy_key'],

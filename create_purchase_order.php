@@ -3,6 +3,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/security.php';
 require_once __DIR__ . '/includes/purchase_order.php';
+require_once __DIR__ . '/includes/product_packs.php';
 
 $conn = mysqli_connect($servername, $username, $password, $dbname);
 if (!$conn) {
@@ -84,6 +85,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $signedIn && $branch !== '') {
         $error = 'Invalid security token. Reload and try again.';
     } else {
 
+    // 2026-10-28 packs: an order line entered in packs is saved in base units, its cost per base unit.
+    $poCv = psPackConvertRows($conn, trim((string)($_SESSION['the_company'] ?? '')), $lineProductIds, $lineQtys, (array)($_POST['line_unit'] ?? []), $lineCosts);
+    if (empty($poCv['ok'])) {
+        $error = (string)$poCv['error'];
+    } else {
+        $lineQtys = $poCv['qtys'];
+        $lineCosts = $poCv['costs'] ?: $lineCosts;
+    }
     $rawLines = [];
     $count = max(count($lineProductIds), count($lineQtys), count($lineCosts));
     for ($i = 0; $i < $count; $i++) {
@@ -101,7 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $signedIn && $branch !== '') {
         'notes' => $notes,
         'currency' => $_POST['currency'] ?? '',
     ];
-    if ($isEdit) {
+    if ($error !== '' && $error !== null) {
+        // pack conversion error: shown below, nothing saved
+    } elseif ($isEdit) {
         $result = psUpdatePurchaseOrder($conn, $editId, $payload, $rawLines);
         if ($result['ok']) {
             header('Location: purchase_orders_list.php?updated=1');
@@ -152,6 +163,7 @@ foreach ($poCurrencies as $code => $c) {
     $poRates[$code] = !empty($r['ok']) ? (string)$r['rate'] : '';
 }
 $poCurrencyShown = $isEdit && isset($header) ? (psFxNormalizeCode($header['currency'] ?? '') ?: $poBase) : (psFxNormalizeCode($_POST['currency'] ?? '') ?: $poBase);
+$packAssets = psPackUnitAssets($conn, trim((string)($_SESSION['the_company'] ?? '')));
 mysqli_close($conn);
 ?>
 <!DOCTYPE html>
@@ -254,7 +266,8 @@ mysqli_close($conn);
                                 <?php endforeach; ?>
                             </select>
                         </td>
-                        <td><input type="text" name="line_quantity[]" inputmode="decimal" value="<?php echo htmlspecialchars((string)$line['quantity'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="Qty"></td>
+                        <td><input type="text" name="line_quantity[]" inputmode="decimal" value="<?php echo htmlspecialchars((string)$line['quantity'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="Qty">
+                            <select name="line_unit[]" data-pack-unit-for="line_product_id[]" aria-label="Unit" hidden><option value="base"></option></select></td>
                         <td><input type="text" name="line_unit_cost[]" inputmode="decimal" value="<?php echo htmlspecialchars((string)$line['unit_cost'], ENT_QUOTES, 'UTF-8'); ?>" placeholder="0.00"></td>
                         <td><button type="button" class="po-remove-line">Remove</button></td>
                     </tr>
@@ -281,7 +294,8 @@ mysqli_close($conn);
                         <?php endforeach; ?>
                     </select>
                 </td>
-                <td><input type="text" name="line_quantity[]" inputmode="decimal" value="" placeholder="Qty"></td>
+                <td><input type="text" name="line_quantity[]" inputmode="decimal" value="" placeholder="Qty">
+                    <select name="line_unit[]" data-pack-unit-for="line_product_id[]" aria-label="Unit" hidden><option value="base"></option></select></td>
                 <td><input type="text" name="line_unit_cost[]" inputmode="decimal" value="" placeholder="0.00"></td>
                 <td><button type="button" class="po-remove-line">Remove</button></td>
             </tr>
@@ -329,11 +343,13 @@ mysqli_close($conn);
                     var row = node.querySelector('tr');
                     table.querySelector('tbody').appendChild(node);
                     bindRow(table.querySelector('tbody').lastElementChild);
+                    if (typeof psPackBindAll === 'function') psPackBindAll(table.querySelector('tbody').lastElementChild);
                 });
             }
         })();
         </script>
     <?php endif; ?>
+<?php echo $packAssets; ?>
 <?php ps_close(); ?>
 </body>
 </html>

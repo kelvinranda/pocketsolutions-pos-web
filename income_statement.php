@@ -41,127 +41,101 @@ $totalExpenses = 0;
 $totalNetProfit = 0;
 $error = $scopeError;
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($scopeError)) {
-    $startDate = trim((string)($_POST['start_date'] ?? ''));
-    $endDate = trim((string)($_POST['end_date'] ?? ''));
+// 2026-10-21: per-currency totals, then the consolidated base (each sale / refund / expense at its stored rate).
+// A sale or refund with no stored rate is never counted 1:1 in the base: it stays in its own currency and the
+// consolidated figure is flagged incomplete. Product costs are kept in the base, so a cost taken from the product
+// (older lines that did not store a cost) is a base amount.
+require_once __DIR__ . '/includes/fx_report.php';
+require_once __DIR__ . '/includes/expense_company.php';
+$fx = psFxrContext($conn, $_GET);
+$revMix = $costMix = $refMix = $refCostMix = $expMix = [];
+$isIn = $_SERVER['REQUEST_METHOD'] === 'POST' ? $_POST : $_GET;
+$run = isset($isIn['start_date'], $isIn['end_date']);
+$fxRun = static function (mysqli $conn, array $fx, string $sql, string $types, array $params, array &$mix): bool {
+    $g = psFxrGrouped($conn, $fx, $sql, $types, $params, 0);
+    if (empty($g['ok'])) {
+        return false;
+    }
+    psFxrMerge($mix, $g['total']['mix']);
+    return true;
+};
+
+if ($run && empty($scopeError)) {
+    $startDate = trim((string)($isIn['start_date'] ?? ''));
+    $endDate = trim((string)($isIn['end_date'] ?? ''));
 
     if ($startDate !== '' && $endDate !== '') {
         $in = psBranchSqlInList($scope['branches'] ?? []);
         if ($in === null) {
             $error = 'That branch is not available.';
         } else {
-            // Health-check 2026-10-13: exclude cancelled sales; unit cost = cost saved on the
-            // sale line, else the product's current cost price (older lines never stored cost).
-            // Multi-currency (2026-10-20): everything is brought into the company base. Sale lines (and the cost saved on
-            // them) use their sale's rate; the product's current cost is already in the base.
-            require_once __DIR__ . '/includes/currency.php';
-            $fxOn = psFxHasColumn($conn, 'online_sales_ref', 'fx_rate');
-            psFxBase($conn, psFxSessionCompany()); // amounts below are shown in this base
-            $rate = $fxOn ? 'COALESCE(NULLIF(r.fx_rate, 0), 1)' : '1';
-            $sql = 'SELECT s.revenue / ' . $rate . ' AS revenue, s.quantity,
-                           CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN (s.cost_price + 0) / ' . $rate . '
-                                ELSE COALESCE(g.cost_price + 0, 0) END AS cost_price
-                      FROM online_sales s
+            $base = mysqli_real_escape_string($conn, $fx['base']);
+            $types = 'ss' . $in['types'];
+            $params = array_merge([$startDate, $endDate], $in['params']);
+            $curF = psFxrCurFilterSql($conn, $fx, 'r.currency');
+            $from = ' FROM online_sales s
                       LEFT JOIN online_sales_ref r ON r.invoice_number = s.invoice_number AND r.branch = s.branch
                       LEFT JOIN goods g ON g.product_id = s.product_id AND g.branch = s.branch
                      WHERE s.date_ BETWEEN ? AND ?
                        AND COALESCE(r.status, \'\') <> \'CANCELLED\'
-                       AND s.branch IN (' . $in['sql'] . ')';
-            $stmt = $conn->prepare($sql);
-            if (!$stmt) {
-                error_log('income_statement: sales prepare failed');
-                $error = 'Statement could not be generated.';
-            } else {
-                $types = 'ss' . $in['types'];
-                $params = array_merge([$startDate, $endDate], $in['params']);
-                $bind = [$types];
-                foreach ($params as $k => $v) {
-                    $bind[] = &$params[$k];
-                }
-                call_user_func_array([$stmt, 'bind_param'], $bind);
-                if (!$stmt->execute()) {
-                    error_log('income_statement: sales execute failed');
-                    $error = 'Statement could not be generated.';
-                } else {
-                    $result = $stmt->get_result();
-                    while ($row = $result->fetch_assoc()) {
-                        $revenue = (float)$row['revenue'];
-                        $quantity = (float)$row['quantity'];
-                        $cost_price = (float)$row['cost_price'];
-                        $totalRevenue += $revenue;
-                        $totalCost += $cost_price * $quantity;
-                    }
-                    // Processed refunds reduce revenue; refunded goods' cost comes off cost of sales.
-                    $rrate = $fxOn ? 'COALESCE(NULLIF(rr.fx_rate, 0), 1)' : '1';
-                    $rsql = 'SELECT COALESCE(SUM(q.processed_amount / ' . $rrate . '), 0) AS refunded,
-                                    COALESCE(SUM(lc.refund_cost), 0) AS refunded_cost
-                               FROM sale_refund_requests q
-                               LEFT JOIN online_sales_ref rr ON rr.invoice_number = q.invoice_number
-                               LEFT JOIN (
-                                    SELECT rl.request_id,
-                                           SUM(rl.requested_qty * CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL
-                                               THEN (s.cost_price + 0) / ' . ($fxOn ? 'COALESCE(NULLIF(r2.fx_rate, 0), 1)' : '1') . '
-                                               ELSE COALESCE(g.cost_price + 0, 0) END) AS refund_cost
-                                      FROM sale_refund_request_lines rl
-                                      JOIN online_sales s ON s.id = rl.sale_line_id
-                                      LEFT JOIN online_sales_ref r2 ON r2.invoice_number = s.invoice_number
-                                      LEFT JOIN goods g ON g.product_id = s.product_id AND g.branch = s.branch
-                                     GROUP BY rl.request_id
-                               ) lc ON lc.request_id = q.id
-                              WHERE q.status = \'PROCESSED\'
-                                AND DATE(q.processed_at) BETWEEN ? AND ?
-                                AND q.branch IN (' . $in['sql'] . ')';
-                    $rstmt = $conn->prepare($rsql);
-                    if ($rstmt) {
-                        $rbind = [$types];
-                        $rparams = $params;
-                        foreach ($rparams as $k => $v) {
-                            $rbind[] = &$rparams[$k];
-                        }
-                        call_user_func_array([$rstmt, 'bind_param'], $rbind);
-                        if ($rstmt->execute()) {
-                            $rrow = $rstmt->get_result()->fetch_assoc();
-                            $totalRefunds = (float)($rrow['refunded'] ?? 0);
-                            $totalRefundCost = (float)($rrow['refunded_cost'] ?? 0);
-                        }
-                        $rstmt->close();
-                    }
-                    $totalRevenue -= $totalRefunds;
-                    $totalCost -= $totalRefundCost;
-                    $totalGrossProfit = $totalRevenue - $totalCost;
-                }
-                $stmt->close();
-            }
+                       AND s.branch IN (' . $in['sql'] . ')' . $curF;
+            // Revenue: each line in its sale currency, base at the sale's stored rate.
+            $ok = $fxRun($conn, $fx, 'SELECT ' . psFxrLineAggSql($conn, $fx, 's', 'r', 'COUNT(DISTINCT s.invoice_number)') . $from . ' GROUP BY r.currency', $types, $params, $revMix);
+            // Cost of sales: the cost saved on the line (sale currency) or the product's cost (base).
+            $lineCost = 'NULLIF(s.cost_price + 0, 0) IS NOT NULL';
+            $costCur = "(CASE WHEN $lineCost THEN r.currency ELSE '$base' END)";
+            $costAmt = "ROUND(CAST(s.quantity AS DECIMAL(14,3)) * (CASE WHEN $lineCost THEN s.cost_price + 0 ELSE COALESCE(g.cost_price + 0, 0) END), 2)";
+            $ok = $ok && $fxRun($conn, $fx, 'SELECT ' . psFxrAggSelectSql($conn, $fx, $costCur, $costAmt, null, "(CASE WHEN $lineCost THEN r.fx_rate ELSE 1 END)") . $from . ' GROUP BY ' . $costCur, $types, $params, $costMix);
 
-            // Global expenses (no branch column on expenses — company-wide).
-            if ($error === '' || $error === $scopeError) {
-                $stmt = $conn->prepare(
-                    'SELECT SUM(' . (psFxHasColumn($conn, 'expenses', 'base_amount') ? 'COALESCE(base_amount, amount + 0)' : 'amount') . ') AS total_expenses FROM expenses
-                     WHERE transaction_date BETWEEN ? AND ?'
-                );
-                if (!$stmt) {
-                    error_log('income_statement: expenses prepare failed');
-                    $error = 'Statement could not be generated.';
-                } else {
-                    $stmt->bind_param('ss', $startDate, $endDate);
-                    if (!$stmt->execute()) {
-                        error_log('income_statement: expenses execute failed');
-                        $error = 'Statement could not be generated.';
-                    } else {
-                        $result = $stmt->get_result();
-                        if ($row = $result->fetch_assoc()) {
-                            $totalExpenses = $row['total_expenses'] ? (float)$row['total_expenses'] : 0;
-                        }
-                        $totalNetProfit = $totalGrossProfit - $totalExpenses;
-                    }
-                    $stmt->close();
-                }
+            // Processed refunds (original sale currency and rate) and the cost of the refunded goods.
+            $hasRfCur = psFxHasColumn($conn, 'sale_refund_requests', 'currency');
+            $rfCur = $hasRfCur ? 'COALESCE(q.currency, rr.currency)' : 'rr.currency';
+            $rfAmt = 'CAST(q.processed_amount AS DECIMAL(14,2))';
+            $rfBase = $hasRfCur && psFxHasColumn($conn, 'sale_refund_requests', 'base_amount')
+                ? "(CASE WHEN q.base_amount IS NOT NULL AND q.processed_amount = q.requested_amount THEN q.base_amount ELSE ROUND($rfAmt / NULLIF(rr.fx_rate, 0), 2) END)"
+                : "ROUND($rfAmt / NULLIF(rr.fx_rate, 0), 2)";
+            $rfWhere = ' FROM sale_refund_requests q
+                         LEFT JOIN online_sales_ref rr ON rr.invoice_number = q.invoice_number
+                        WHERE q.status = \'PROCESSED\'
+                          AND DATE(q.processed_at) BETWEEN ? AND ?
+                          AND q.branch IN (' . $in['sql'] . ')' . psFxrCurFilterSql($conn, $fx, $rfCur);
+            $ok = $ok && $fxRun($conn, $fx, 'SELECT ' . psFxrAggSelectSql($conn, $fx, $rfCur, $rfAmt, $rfBase, 'rr.fx_rate') . $rfWhere . ' GROUP BY ' . $rfCur, $types, $params, $refMix);
+            $rcCur = "(CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN r2.currency ELSE '$base' END)";
+            $rcAmt = 'ROUND(rl.requested_qty * (CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN s.cost_price + 0 ELSE COALESCE(g.cost_price + 0, 0) END), 2)';
+            $ok = $ok && $fxRun($conn, $fx, 'SELECT ' . psFxrAggSelectSql($conn, $fx, $rcCur, $rcAmt, null, '(CASE WHEN NULLIF(s.cost_price + 0, 0) IS NOT NULL THEN r2.fx_rate ELSE 1 END)') . '
+                  FROM sale_refund_request_lines rl
+                  JOIN sale_refund_requests q ON q.id = rl.request_id
+                  JOIN online_sales s ON s.id = rl.sale_line_id
+                  LEFT JOIN online_sales_ref r2 ON r2.invoice_number = s.invoice_number
+                  LEFT JOIN goods g ON g.product_id = s.product_id AND g.branch = s.branch
+                 WHERE q.status = \'PROCESSED\'
+                   AND DATE(q.processed_at) BETWEEN ? AND ?
+                   AND q.branch IN (' . $in['sql'] . ')' . psFxrCurFilterSql($conn, $fx, 'r2.currency') . '
+                 GROUP BY ' . $rcCur, $types, $params, $refCostMix);
+
+            // Expenses: company-wide (no branch column), each in its own currency with its stored base amount.
+            $ok = $ok && $fxRun($conn, $fx, 'SELECT ' . psFxrAggSelectSql($conn, $fx, 'currency', 'CAST(amount AS DECIMAL(14,2))', 'base_amount', 'fx_rate') . '
+                  FROM expenses WHERE ' . psExpenseCompanySql($conn) . ' AND transaction_date BETWEEN ? AND ?' . psFxrCurFilterSql($conn, $fx, 'currency') . ' GROUP BY currency',
+                'ss', [$startDate, $endDate], $expMix);
+            if (!$ok) {
+                error_log('income_statement: query failed');
+                $error = 'Statement could not be generated.';
             }
         }
     } else {
         $error = 'Please provide both start and end dates.';
     }
 }
+// Statement lines (mixes): revenue after refunds, cost after refunded goods, gross and net profit.
+$netRevMix = $revMix;
+psFxrMerge($netRevMix, psFxrNegate($refMix));
+$netCostMix = $costMix;
+psFxrMerge($netCostMix, psFxrNegate($refCostMix));
+$grossMix = $netRevMix;
+psFxrMerge($grossMix, psFxrNegate($netCostMix));
+$netMix = $grossMix;
+psFxrMerge($netMix, psFxrNegate($expMix));
+$totalRefunds = psFxrBase($refMix) / 100;
 
 $scopeLabel = '';
 if (!empty($scope['ok'])) {
@@ -209,15 +183,20 @@ if (!empty($scope['ok'])) {
     </div>
 
     <div class="results">
-        <?php if ($_SERVER['REQUEST_METHOD'] === 'POST' && $startDate !== '' && $endDate !== '' && ($error === '' || $error === $scopeError) && empty($scopeError)): ?>
+        <?php if ($run && $startDate !== '' && $endDate !== '' && ($error === '' || $error === $scopeError) && empty($scopeError)): ?>
             <h3>Results from <?php echo htmlspecialchars($startDate); ?> to <?php echo htmlspecialchars($endDate); ?></h3>
+            <?php echo psFxrToolbar($fx, ['start_date' => $startDate, 'end_date' => $endDate]); ?>
+            <?php $m = fn(array $x, array $o = []) => psFxrAmount($conn, $fx, $x, $o + ['empty' => psFxFormat($conn, 0, $fx['base'])]); ?>
             <div class="summary">
-                <p><strong>Total Revenue (after refunds): </strong> <?php echo ps_money($totalRevenue); ?><?php if ($totalRefunds > 0): ?> <span class="ps-muted">(refunds <?php echo ps_money($totalRefunds); ?>)</span><?php endif; ?></p>
-                <p><strong>Total Cost of Sales: </strong> <?php echo ps_money($totalCost); ?></p>
-                <p><strong>Gross Profit: </strong> <?php echo ps_money($totalGrossProfit); ?></p>
-                <p><strong>Total Expenses: </strong> <?php echo ps_money($totalExpenses); ?></p>
-                <p><strong>Net Profit: </strong> <?php echo ps_money($totalNetProfit); ?></p>
+                <p><strong>Total Revenue (after refunds): </strong> <?php echo $m($netRevMix); ?><?php if ($refMix): ?> <span class="ps-muted">(refunds <?php echo $m($refMix); ?>)</span><?php endif; ?></p>
+                <p><strong>Total Cost of Sales: </strong> <?php echo $m($netCostMix); ?></p>
+                <p><strong>Gross Profit: </strong> <?php echo $m($grossMix); ?></p>
+                <p><strong>Total Expenses: </strong> <?php echo $m($expMix); ?></p>
+                <p><strong>Net Profit: </strong> <?php echo $m($netMix, ['strong' => true]); ?></p>
             </div>
+            <?php if ($fx['view'] === PS_FXR_BREAKDOWN): ?><p class="fxr-label">By currency: each line is shown per currency without conversion. Product costs are kept in <?php echo htmlspecialchars($fx['base']); ?>, so a cost of older sales appears in <?php echo htmlspecialchars($fx['base']); ?>.</p><?php endif; ?>
+            <?php echo psFxrSummary($conn, $fx, $revMix, 'Sales revenue by currency (before refunds)'); ?>
+            <?php echo psFxrSummary($conn, $fx, $expMix, 'Expenses by currency'); ?>
             <button class="print-button" onclick="printPage()">Print Statement</button>
         <?php endif; ?>
     </div>
@@ -225,10 +204,6 @@ if (!empty($scope['ok'])) {
     <a class="back-button" href="admin_dashboard.php">Back to Dashboard</a>
 </div>
 
-<?php
-$conn->close();
-?>
-
-<?php ps_close(); ?>
+<?php ps_close(); $conn->close(); ?>
 </body>
 </html>

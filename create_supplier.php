@@ -13,6 +13,7 @@ psEnsureSupplierMasterSchema($conn);
 psEnsureSupplierAuditSchema($conn);
 
 $supplier_code = $supplier_name = $contact_person = $phone = $email = $address = '';
+$extra = ['tax_number' => '', 'registration_number' => '', 'payment_terms' => '', 'notes' => ''];
 $error = '';
 $success = '';
 $signedIn = isset($_SESSION['logger']) && trim((string)$_SESSION['logger']) !== '';
@@ -28,6 +29,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $phone = trim((string)($_POST['phone'] ?? ''));
     $email = trim((string)($_POST['email'] ?? ''));
     $address = trim((string)($_POST['address'] ?? ''));
+    foreach (array_keys($extra) as $f) {
+        $extra[$f] = trim((string)($_POST[$f] ?? ''));
+    }
 
     if (!$signedIn) {
         $error = 'You must be signed in to create a supplier.';
@@ -39,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'phone' => $phone,
             'email' => $email,
             'address' => $address,
-        ]);
+        ] + $extra);
         if ($result['ok']) {
             header('Location: suppliers_list.php?created=1');
             exit;
@@ -96,6 +100,21 @@ mysqli_close($conn);
 
             <label for="address">Address</label>
             <textarea id="address" name="address" maxlength="500"><?php echo htmlspecialchars($address, ENT_QUOTES, 'UTF-8'); ?></textarea>
+
+            <label for="tax_number">Tax / VAT number</label>
+            <input type="text" id="tax_number" name="tax_number" maxlength="64"
+                   value="<?php echo htmlspecialchars($extra['tax_number'], ENT_QUOTES, 'UTF-8'); ?>">
+
+            <label for="registration_number">Registration number</label>
+            <input type="text" id="registration_number" name="registration_number" maxlength="64"
+                   value="<?php echo htmlspecialchars($extra['registration_number'], ENT_QUOTES, 'UTF-8'); ?>">
+
+            <label for="payment_terms">Payment terms</label>
+            <input type="text" id="payment_terms" name="payment_terms" maxlength="120" placeholder="e.g. 30 days from statement"
+                   value="<?php echo htmlspecialchars($extra['payment_terms'], ENT_QUOTES, 'UTF-8'); ?>">
+
+            <label for="notes">Notes</label>
+            <textarea id="notes" name="notes" maxlength="2000"><?php echo htmlspecialchars($extra['notes'], ENT_QUOTES, 'UTF-8'); ?></textarea>
 
             <div class="supplier-actions">
                 <button type="submit">Save supplier</button>

@@ -191,7 +191,11 @@ function psInventoryReportingStockOnHand(mysqli $conn, array $filters): array
     }
     $slice = array_slice($allRows, $page['offset'], $page['page_size']);
 
-    $valuationNote = 'Stock valuation includes ledger-controlled products with cost_price > 0 only ('
+    // 2026-10-21: product costs are kept in the company base currency, so the valuation is a base amount.
+    require_once __DIR__ . '/currency.php';
+    $invBaseCur = psFxBase($conn, psFxSessionCompany());
+    $valuationNote = 'Amounts in ' . $invBaseCur . ' (product cost prices are kept in the base currency; quantities are never converted). '
+        . 'Stock valuation includes ledger-controlled products with cost_price > 0 only ('
         . $valuedLines . ' lines). '
         . ($unvaluedLedger > 0
             ? ($unvaluedLedger . ' ledger-controlled lines lack defensible cost and are excluded from value.')
@@ -399,7 +403,7 @@ function psInventoryReportingExportCsv(mysqli $conn, string $kind, array $rawFil
         $res = psInventoryReportingStockOnHand($conn, $f);
         $headers = [
             'Product ID', 'Product', 'Branch', 'Qty', 'Qty source', 'Reorder level',
-            'Low', 'Out', 'Cost', 'Stock value', 'Status',
+            'Low', 'Out', 'Cost (' . psFxBase($conn, psFxSessionCompany()) . ')', 'Stock value (' . psFxBase($conn, psFxSessionCompany()) . ')', 'Status',
         ];
         $lines = [];
         // Need full filtered set — helper paginates; call with large page

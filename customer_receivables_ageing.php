@@ -65,7 +65,6 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -139,17 +138,24 @@ mysqli_close($conn);
             </div>
         </form>
 
-        <?php if ($ageing): ?>
+        <?php if ($ageing):
+            require_once __DIR__ . '/includes/fx_report.php';
+            $fx = psFxrContext($conn, $_GET);
+            $fxb = $ageing['fx_buckets'] ?? [];
+            $A = static fn($v, $cur): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, psFxNormalizeCode($cur ?? '') ?: $fx['base']), ENT_QUOTES, 'UTF-8');
+            $keep = $_GET; unset($keep['fx_view'], $keep['fx_cur']);
+            echo psFxrToolbar($fx, $keep);
+        ?>
             <p class="hint">
                 As-at <?php echo htmlspecialchars((string)$ageing['as_at'], ENT_QUOTES, 'UTF-8'); ?>.
                 <?php echo htmlspecialchars((string)$ageing['due_date_source'], ENT_QUOTES, 'UTF-8'); ?>
             </p>
             <div class="mgmt">
                 <div>Total Credit Sales Outstanding:
-                    <strong class="mono"><?php echo htmlspecialchars((string)$ageing['management']['total_credit_sales_outstanding'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                    <strong class="mono"><?php echo psFxrAmount($conn, $fx, $fxb['total'] ?? []); ?></strong>
                 </div>
                 <div>Total Customer Account Balance (ledger as-at):
-                    <strong class="mono"><?php echo htmlspecialchars((string)$ageing['management']['total_customer_account_balance'], ENT_QUOTES, 'UTF-8'); ?></strong>
+                    <strong class="mono"><?php echo psFxrAmount($conn, $fx, $ageing['management']['fx_balance'] ?? [], ['native' => true]); ?></strong> <span class="hint">(per account currency; balances are not converted)</span>
                 </div>
                 <p class="hint"><?php echo htmlspecialchars((string)$ageing['management']['note'], ENT_QUOTES, 'UTF-8'); ?></p>
                 <?php if (!empty($ageing['fx_note'])): ?><p class="hint"><?php echo htmlspecialchars((string)$ageing['fx_note'], ENT_QUOTES, 'UTF-8'); ?></p><?php endif; ?>
@@ -191,12 +197,12 @@ mysqli_close($conn);
                                 <span class="hint">(<?php echo htmlspecialchars(psCustomerAccountStatusLabel((string)$row['account_status']), ENT_QUOTES, 'UTF-8'); ?>)</span>
                                 <?php if (!empty($row['currency'])): ?><b><?php echo htmlspecialchars((string)$row['currency'], ENT_QUOTES, 'UTF-8'); ?></b><?php endif; ?>
                             </td>
-                            <td class="num"><?php echo htmlspecialchars((string)$b['current'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$b['1_30'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$b['31_60'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$b['61_90'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$b['91_plus'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num mono"><?php echo htmlspecialchars((string)$b['total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo $A($b['current'], $row['currency'] ?? null); ?></td>
+                            <td class="num"><?php echo $A($b['1_30'], $row['currency'] ?? null); ?></td>
+                            <td class="num"><?php echo $A($b['31_60'], $row['currency'] ?? null); ?></td>
+                            <td class="num"><?php echo $A($b['61_90'], $row['currency'] ?? null); ?></td>
+                            <td class="num"><?php echo $A($b['91_plus'], $row['currency'] ?? null); ?></td>
+                            <td class="num mono"><?php echo $A($b['total'], $row['currency'] ?? null); ?></td>
                             <td>
                                 <a href="customer_account_view.php?id=<?php echo (int)$row['customer_account_id']; ?>">Account</a>
                                 ·
@@ -214,26 +220,27 @@ mysqli_close($conn);
                                 <tr class="hint">
                                     <td colspan="2">Totals in <?php echo htmlspecialchars((string)$tcur, ENT_QUOTES, 'UTF-8'); ?></td>
                                     <?php foreach (['current', '1_30', '31_60', '61_90', '91_plus', 'total'] as $bk): ?>
-                                        <td class="num"><?php echo htmlspecialchars((string)$tc[$bk], ENT_QUOTES, 'UTF-8'); ?></td>
+                                        <td class="num"><?php echo $A($tc[$bk], $tcur); ?></td>
                                     <?php endforeach; ?>
                                     <td></td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
                         <tr>
-                            <td colspan="2">Totals<?php echo !empty($ageing['base_currency']) ? ' (' . htmlspecialchars((string)$ageing['base_currency'], ENT_QUOTES, 'UTF-8') . ')' : ''; ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$t['current'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$t['1_30'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$t['31_60'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$t['61_90'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num"><?php echo htmlspecialchars((string)$t['91_plus'], ENT_QUOTES, 'UTF-8'); ?></td>
-                            <td class="num mono"><?php echo htmlspecialchars((string)$t['total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td colspan="2">Totals<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? ' (per currency)' : (!empty($ageing['base_currency']) ? ' (' . htmlspecialchars((string)$ageing['base_currency'], ENT_QUOTES, 'UTF-8') . ', each sale at its stored rate)' : ''); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $fxb['current'] ?? []); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $fxb['1_30'] ?? []); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $fxb['31_60'] ?? []); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $fxb['61_90'] ?? []); ?></td>
+                            <td class="num"><?php echo psFxrAmount($conn, $fx, $fxb['91_plus'] ?? []); ?></td>
+                            <td class="num mono"><?php echo psFxrAmount($conn, $fx, $fxb['total'] ?? [], ['strong' => true]); ?></td>
                             <td></td>
                         </tr>
                     </tfoot>
                 <?php endif; ?>
             </table>
 
+            <?php echo psFxrSummary($conn, $fx, $fxb['total'] ?? [], 'Outstanding by currency'); ?>
             <?php if (!empty($ageing['as_at_notes'])): ?>
                 <ul class="hint">
                     <?php foreach ($ageing['as_at_notes'] as $note): ?>
@@ -243,6 +250,6 @@ mysqli_close($conn);
             <?php endif; ?>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

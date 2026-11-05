@@ -32,6 +32,8 @@ $filters = [
     'till_session_id' => (int)($_GET['till_session_id'] ?? 0),
     'page' => max(1, (int)($_GET['page'] ?? 1)),
     'page_size' => 25,
+    'fx_view' => $_GET['fx_view'] ?? '',
+    'fx_cur' => $_GET['fx_cur'] ?? '',
 ];
 
 if ($signedIn && isset($_GET['export']) && (string)$_GET['export'] === 'csv') {
@@ -58,8 +60,8 @@ if ($signedIn) {
 } else {
     $error = 'You must be signed in to view this report.';
 }
-
-mysqli_close($conn);
+$fx = $result['filters']['fx'] ?? psFxrContext($conn, $_GET);
+$M = static fn(?array $mix, array $o = []): string => psFxrAmount($conn, $fx, $mix ?? [], $o);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -121,8 +123,10 @@ mysqli_close($conn);
             </select>
             <input type="number" name="till_session_id" placeholder="Session #" min="0" value="<?php echo (int)$filters['till_session_id'] > 0 ? (int)$filters['till_session_id'] : ''; ?>">
             <button type="submit">Run</button>
+            <?php foreach (psFxrQuery($fx) as $fk => $fv): ?><input type="hidden" name="<?php echo $fk; ?>" value="<?php echo htmlspecialchars($fv, ENT_QUOTES, 'UTF-8'); ?>"><?php endforeach; ?>
             <button type="submit" name="export" value="csv">Export CSV</button>
         </form>
+        <?php $keep = $_GET; unset($keep['export'], $keep['page']); echo psFxrToolbar($fx, $keep); ?>
 
         <?php if ($result): ?>
             <?php $totals = $result['totals']['by_type'] ?? []; ?>
@@ -135,7 +139,7 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars(psCashMovementTypeLabel($mt), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars($dir, ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo (int)($totals[$mt]['count'] ?? 0); ?></td>
-                        <td><?php echo htmlspecialchars((string)($totals[$mt]['amount'] ?? '0.00'), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $M($totals[$mt]['fx'] ?? []); ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
@@ -152,7 +156,7 @@ mysqli_close($conn);
                             <td><?php echo htmlspecialchars($mt, ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo htmlspecialchars((string)$rr['reason_label'], ENT_QUOTES, 'UTF-8'); ?></td>
                             <td><?php echo (int)$rr['count']; ?></td>
-                            <td><?php echo htmlspecialchars((string)$rr['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                            <td class="num"><?php echo $M($rr['fx'] ?? []); ?></td>
                         </tr>
                     <?php endforeach; endforeach; ?>
                     </tbody>
@@ -181,7 +185,7 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)$row['created_by'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['type_label'] ?? $row['movement_type']), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['direction'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['amount'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo psFxrOne($conn, $fx, $row['fx_currency'] ?? null, $row['amount'], $row['base_amount'] ?? null, ['rate' => (string)($row['fx_rate'] ?? ''), 'ids' => (string)($row['fx_rate_ids'] ?? ''), 'ref' => (string)($row['reference_display'] ?? '')], ['at' => (string)$row['movement_at']]); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['reference_display'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['reason_label'] ?? $row['reason'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)($row['description'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
@@ -206,6 +210,6 @@ mysqli_close($conn);
             <?php endif; ?>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

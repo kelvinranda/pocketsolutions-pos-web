@@ -6,6 +6,7 @@
 require 'session_check.php';
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/platform_page.php';
+require_once __DIR__ . '/includes/user_roles.php';
 
 $conn = psPlatformPageBoot();
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -126,6 +127,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $errors[] = $r['error'];
         }
+    } elseif ($action === 'change_role') {
+        // 2026-10-28: Super Admin changes a company user's role (reason required; logged here and in the company's audit).
+        $r = psUserRoleChange($conn, $key, (int)($_POST['user_id'] ?? 0), (string)($_POST['level'] ?? ''), [
+            'actor' => $actor, 'platform' => true, 'reason' => (string)($_POST['reason'] ?? ''),
+        ]);
+        if (!empty($r['ok'])) {
+            psPlatformFlash('ok', $r['email'] . ' is now ' . psUserRoleLabel((string)$r['after']) . '.');
+            header('Location: ' . $self);
+            exit;
+        }
+        $errors[] = $r['error'];
+    } elseif ($action === 'add_branch') {
+        // 2026-11-02: a branch may share its name with another company's branch; the stored key then gets "~COMPANY".
+        $k = psBranchKeyFor($conn, (string)($_POST['branch_name'] ?? ''), $key);
+        if (empty($k['ok'])) {
+            $errors[] = $k['error'];
+        } elseif (mb_strlen(psBranchLabel($k['key'])) < 2 || mb_strlen(psBranchLabel($k['key'])) > 100) {
+            $errors[] = 'Branch name must be 2–100 characters.';
+        } else {
+            $stmt = mysqli_prepare($conn, 'INSERT INTO branchies (branch_name, date_created, company_name) VALUES (?, ?, ?)');
+            mysqli_stmt_bind_param($stmt, 'sss', $k['key'], $now, $key);
+            $ok = mysqli_stmt_execute($stmt);
+            mysqli_stmt_close($stmt);
+            if ($ok) {
+                psPlatformAudit($conn, 'BRANCH_CREATE', $key, '', ['branch' => $k['key']]);
+                psPlatformFlash('ok', 'Branch ' . psBranchLabel($k['key']) . ' added.');
+                header('Location: ' . $self);
+                exit;
+            }
+            $errors[] = 'The branch could not be saved.';
+        }
     } elseif ($action === 'add_admin') {
         $branches = psPlatformCompanyBranches($conn, $key);
         $branch = trim((string)($_POST['branch'] ?? ''));
@@ -163,6 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $admins = psPlatformCompanyAdmins($conn, $key);
+$roleUsers = psUserRoleCompanyUsers($conn, $key);
 $branches = psPlatformCompanyBranches($conn, $key);
 $activity = psPlatformAuditRows($conn, $key, 50);
 $stmt = mysqli_prepare($conn, 'SELECT level, COUNT(*) n FROM users WHERE company_name = ? GROUP BY level ORDER BY level');
@@ -260,6 +293,27 @@ $minLen = PS_PASSWORD_MIN_LENGTH;
             </div>
             <?php endif; ?>
 
+            <details class="ps-card" <?php echo ($_POST['action'] ?? '') === 'change_role' ? 'open' : ''; ?>>
+                <summary class="ps-card-header"><h2 class="ps-card-title">Change a user's role</h2></summary>
+                <div class="ps-card-content">
+                    <p class="pf-help">Normally the company's Admin does this on their Users page. Use this when they cannot (e.g. their only Admin is away).
+                        The last Admin cannot be moved to another role. The reason is kept in this company's activity log.</p>
+                    <form method="post" action="<?php echo $h($self); ?>" class="pf-form" autocomplete="off">
+                        <?php echo psCsrfField(); ?>
+                        <input type="hidden" name="action" value="change_role"><input type="hidden" name="id" value="<?php echo $id; ?>">
+                        <div class="pf-grid">
+                            <label class="ps-field pf-span"><span class="ps-label">User</span>
+                                <select class="ps-input" name="user_id" required><option value="">Choose a user…</option>
+                                <?php foreach ($roleUsers as $u): ?><option value="<?php echo (int)$u['id']; ?>" <?php echo (int)($_POST['user_id'] ?? 0) === (int)$u['id'] ? 'selected' : ''; ?>><?php echo $h(trim($u['firstname'] . ' ' . $u['lastname']) . ' · ' . $u['email'] . ' · now ' . psUserRoleLabel((string)$u['level'])); ?></option><?php endforeach; ?></select></label>
+                            <label class="ps-field"><span class="ps-label">New role</span>
+                                <select class="ps-input" name="level" required><?php foreach (psUserRoleChoices() as $val => $label): ?><option value="<?php echo $h($val); ?>" <?php echo ($_POST['level'] ?? '') === $val ? 'selected' : ''; ?>><?php echo $h($label); ?></option><?php endforeach; ?></select></label>
+                            <label class="ps-field"><span class="ps-label">Reason</span><input class="ps-input" name="reason" required maxlength="400" placeholder="e.g. Owner asked by phone, 28 Oct" value="<?php echo $v('reason'); ?>"></label>
+                        </div>
+                        <div class="pf-actions"><button class="ps-btn ps-btn-default" type="submit">Change role</button></div>
+                    </form>
+                </div>
+            </details>
+
             <details class="ps-card" <?php echo ($_POST['action'] ?? '') === 'add_admin' ? 'open' : ''; ?>>
                 <summary class="ps-card-header"><h2 class="ps-card-title">Add another admin</h2></summary>
                 <div class="ps-card-content">
@@ -315,9 +369,17 @@ $minLen = PS_PASSWORD_MIN_LENGTH;
                     </form>
                     <dl class="pf-dl">
                         <dt>Users</dt><dd><?php echo $byLevel ? $h(implode(', ', array_map(static fn ($r) => $r['n'] . ' ' . psSecurityNormalizeLevel((string)$r['level']), $byLevel))) : '0'; ?></dd>
-                        <dt>Branches</dt><dd><?php echo $branches ? $h(implode(', ', $branches)) : '—'; ?></dd>
+                        <dt>Branches</dt><dd><?php echo $branches ? $h(implode(', ', array_map('psBranchLabel', $branches))) : '—'; ?></dd>
                         <dt>Added</dt><dd><?php echo $h(date('d M Y', strtotime((string)$c['created_at']))); ?><?php echo $c['created_by'] !== 'backfill' ? ' by ' . $h($c['created_by']) : ' (existing company)'; ?></dd>
                     </dl>
+                    <form method="post" action="<?php echo $h($self); ?>" class="pf-actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
+                        <?php echo psCsrfField(); ?>
+                        <input type="hidden" name="action" value="add_branch"><input type="hidden" name="id" value="<?php echo $id; ?>">
+                        <label class="ps-field" style="margin:0"><span class="ps-label">Add a branch</span>
+                            <input class="ps-input" name="branch_name" required maxlength="100" placeholder="e.g. Rusape"></label>
+                        <button class="ps-btn ps-btn-outline" type="submit">Add branch</button>
+                        <span class="pf-help" style="flex-basis:100%">Another company may already use the same name; each company only sees its own.</span>
+                    </form>
                 </div>
             </div>
 

@@ -43,21 +43,21 @@ if (!$isDate($end_date)) {
 $sales_data = [];
 $total = 0.0;
 $loadError = '';
-// Multi-currency (2026-10-20): each line in its sale currency; the total is in the company base.
-require_once __DIR__ . '/includes/currency.php';
-$csFx = psFxHasColumn($conn, 'online_sales_ref', 'fx_rate');
-$csBase = psFxBase($conn, psFxSessionCompany());
+// Multi-currency: each line in its sale currency; per-currency totals; consolidated at each sale's stored rate.
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = psFxrContext($conn, $_GET);
+$csBase = $fx['base'];
+$totalMix = [];
 if ($cashier !== '') {
     $stmt = mysqli_prepare(
         $conn,
-        "SELECT s.product, s.quantity, s.revenue, s.date_, "
-        . ($csFx ? "COALESCE(r.currency, '" . mysqli_real_escape_string($conn, $csBase) . "') AS currency, s.revenue / COALESCE(NULLIF(r.fx_rate, 0), 1) AS base_revenue"
-                 : "'" . mysqli_real_escape_string($conn, $csBase) . "' AS currency, s.revenue AS base_revenue") . "
+        "SELECT s.product, s.quantity, s.revenue, s.date_, s.invoice_number, r.currency AS fx_currency, r.fx_rate, r.fx_rate_ids,
+                ROUND(CAST(s.revenue AS DECIMAL(14,2)) / NULLIF(r.fx_rate, 0), 2) AS base_revenue
            FROM online_sales s
            LEFT JOIN online_sales_ref r ON r.invoice_number = s.invoice_number AND r.branch = s.branch
           WHERE s.cashier = ? AND s.branch = ?
             AND DATE(s.date_) BETWEEN ? AND ?
-            AND COALESCE(r.status, '') <> 'CANCELLED'
+            AND COALESCE(r.status, '') <> 'CANCELLED'" . psFxrCurFilterSql($conn, $fx, 'r.currency') . "
           ORDER BY s.date_, s.id"
     );
     if ($stmt) {
@@ -66,7 +66,7 @@ if ($cashier !== '') {
             $res = mysqli_stmt_get_result($stmt);
             while ($res && ($row = mysqli_fetch_assoc($res))) {
                 $sales_data[] = $row;
-                $total += (float)$row['base_revenue'];
+                psFxrAdd($totalMix, $fx, $row['fx_currency'], $row['revenue'], $row['base_revenue'], ['rate' => (string)$row['fx_rate']]);
             }
         } else {
             $loadError = 'Sales could not be loaded.';
@@ -79,7 +79,6 @@ if ($cashier !== '') {
         error_log('cashier_sales: query failed');
     }
 }
-mysqli_close($conn);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -96,6 +95,7 @@ mysqli_close($conn);
 <div class="ps-link-row">
     <a class="ps-btn ps-btn-outline ps-btn-sm" href="z_report.php">Back to Z Report</a>
 </div>
+<?php echo psFxrToolbar($fx, ['cashier' => $cashier, 'start_date' => $start_date, 'end_date' => $end_date]); ?>
 <?php if ($loadError !== ''): ?>
     <div class="ps-alert ps-alert-destructive"><?php echo ps_h($loadError); ?></div>
 <?php endif; ?>
@@ -113,16 +113,17 @@ mysqli_close($conn);
                     <tr>
                         <td><?php echo ps_h($data['product']); ?></td>
                         <td class="num"><?php echo ps_h($data['quantity']); ?></td>
-                        <td class="num"><?php echo ps_h(ps_money($data['revenue'], $data['currency'])); ?></td>
+                        <td class="num"><?php echo psFxrOne($conn, $fx, $data['fx_currency'], $data['revenue'], $data['base_revenue'], ['rate' => (string)$data['fx_rate'], 'ids' => (string)$data['fx_rate_ids'], 'ref' => 'Invoice ' . $data['invoice_number']]); ?></td>
                         <td><?php echo ps_h($data['date_']); ?></td>
                     </tr>
                 <?php endforeach; ?>
-                <tr><th colspan="2">Total (in <?php echo ps_h($csBase); ?>)</th><th class="num"><?php echo ps_h(ps_money($total, $csBase)); ?></th><th></th></tr>
+                <tr><th colspan="2">Total<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? ' (per currency)' : ' (in ' . ps_h($csBase) . ')'; ?></th><th class="num"><?php echo psFxrAmount($conn, $fx, $totalMix, ['strong' => true]); ?></th><th></th></tr>
             <?php endif; ?>
             </tbody>
         </table>
     </div>
 </div></div>
-<?php ps_close(); ?>
+<?php echo psFxrSummary($conn, $fx, $totalMix); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

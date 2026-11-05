@@ -1541,7 +1541,7 @@ function psCustomerAccountPaymentList(mysqli $conn, string $search = '', string 
         $statusFilter = 'all';
     }
 
-    $sql = 'SELECT p.*, a.account_number, c.customer_code, c.first_name, c.last_name, c.business_name, c.customer_type
+    $sql = 'SELECT p.*, a.account_number, a.currency AS account_currency, c.customer_code, c.first_name, c.last_name, c.business_name, c.customer_type
             FROM customer_account_payments p
             INNER JOIN customer_accounts a ON a.id = p.customer_account_id
             INNER JOIN customer_master c ON c.id = a.customer_master_id

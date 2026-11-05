@@ -61,7 +61,6 @@ if ($batchId > 0) {
     }
 }
 $list = psAccountingListBatches($conn, 50);
-mysqli_close($conn);
 
 if (isset($_GET['exported'])) {
     $message = 'Batch exported locally (CSV-ready). external_status remains NOT_SENT — not confirmed in an external system.';
@@ -73,8 +72,28 @@ if (isset($_GET['reversed'])) {
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
-$money = static function ($v): string {
-    return number_format((float)$v, 2, '.', ',');
+// 2026-10-21: journals are in the company base (each source converted at its own stored rate).
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = ['view' => PS_FXR_CONSOLIDATED] + psFxrContext($conn, []);
+$money = static function ($v) use ($conn, $fx): string {
+    return htmlspecialchars(psFxFormat($conn, $v ?? 0, $fx['base']), ENT_QUOTES, 'UTF-8');
+};
+// A journal amount with its source document's currency and stored rate (marker + tooltip when converted).
+$E = static function (array $e) use ($conn, $fx): string {
+    $cur = (string)($e['txn_currency'] ?? '');
+    if ($cur === '' || $cur === $fx['base']) {
+        return htmlspecialchars(psFxFormat($conn, $e['amount'] ?? 0, $fx['base']), ENT_QUOTES, 'UTF-8');
+    }
+    return psFxrOne($conn, $fx, $cur, $e['txn_amount'] ?? null, $e['amount'] ?? null,
+        ['rate' => (string)($e['fx_rate'] ?? ''), 'ref' => trim((string)($e['source_type'] ?? '') . ' #' . (string)($e['source_id'] ?? '') . ' ' . (string)($e['doc_number'] ?? ''))]);
+};
+$fxMixOf = static function (array $entries) use ($fx): array {
+    $mix = [];
+    foreach ($entries as $e) {
+        $cur = (string)($e['txn_currency'] ?? '');
+        psFxrAdd($mix, $fx, $cur === '' ? $fx['base'] : $cur, ($e['txn_amount'] ?? null) !== null && $cur !== '' ? $e['txn_amount'] : ($e['amount'] ?? 0), $e['amount'] ?? null, ['rate' => (string)($e['fx_rate'] ?? '')]);
+    }
+    return $mix;
 };
 ?>
 <!DOCTYPE html>
@@ -176,7 +195,7 @@ $money = static function ($v): string {
                 <td><?php echo $h($e['doc_number']); ?></td>
                 <td><?php echo $h($e['debit_account_code']); ?></td>
                 <td><?php echo $h($e['credit_account_code']); ?></td>
-                <td><?php echo $money($e['amount']); ?></td>
+                <td class="num"><?php echo $E($e); ?></td>
                 <td><?php echo $h($e['memo']); ?></td>
             </tr>
         <?php endforeach; ?>
@@ -218,6 +237,7 @@ $money = static function ($v): string {
     <p class="ps-muted">CSV columns: batch_number, batch_status, external_status, entry_seq, source_type, source_id, doc_number, txn_date, branch, debit/credit account code+name, amount, currency, payment_method, mapping keys, memo. Formula-injection escaped via psReportingCsvCell.</p>
 </section>
 <?php endif; ?>
-<?php ps_close(); ?>
+<?php if (!empty($detail['entries'])) { echo psFxrSummary($conn, $fx, $fxMixOf($detail['entries']), 'Batch journals by source currency'); } ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

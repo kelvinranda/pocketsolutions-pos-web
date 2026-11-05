@@ -65,11 +65,14 @@ function psDashboardReportingBuild(mysqli $conn, array $rawFilters = []): array
         return ['ok' => false, 'error' => $norm['error'] ?? 'Dashboard could not be loaded.'];
     }
     $f = $norm['filters'];
+    // 2026-10-21: currency view / filter (consolidated in the base, or by currency).
+    $f['fx'] = psFxrContext($conn, $rawFilters);
     $branchOnly = [
         'branches' => $f['branches'],
         'all_branches' => $f['all_branches'],
         'branch' => $f['branch'],
         'cashier' => '',
+        'fx' => $f['fx'],
     ];
 
     $today = psDashboardPeriodSales($conn, $branchOnly, 'today');
@@ -184,6 +187,7 @@ function psDashboardReportingBuild(mysqli $conn, array $rawFilters = []): array
     return [
         'ok' => true,
         'filters' => $f,
+        'fx' => $f['fx'],
         'today' => $today,
         'week' => $week,
         'month' => $month,
@@ -200,6 +204,7 @@ function psDashboardReportingBuild(mysqli $conn, array $rawFilters = []): array
             'ok' => !empty($cancelledList['ok']),
             'txn_count' => (int)($cancelledList['totals']['txn_count'] ?? 0),
             'revenue' => (string)($cancelledList['totals']['revenue'] ?? '0.00'),
+            'fx' => $cancelledList['totals']['fx'] ?? [],
         ],
         'cash' => $cashSummary,
         'alerts' => $alerts,

@@ -24,6 +24,8 @@ if (!$conn) {
 
 // Multi-currency (2026-10-20): an expense is recorded in an enabled currency with the rate to the company base.
 require_once __DIR__ . '/includes/currency.php';
+require_once __DIR__ . '/includes/expense_company.php';
+psExpenseEnsureCompanyColumn($conn); // 2026-11-02: expenses store the company
 psFxEnsureTransactionColumns($conn);
 $fxCompany = psFxSessionCompany();
 $expCurrencies = psFxCompanyCurrencies($conn, $fxCompany);
@@ -57,16 +59,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $expBase = psFxCentsToMoney(psFxToBaseCents($conn, $expSnap, (int)psFxMoneyToCents($amount)));
             $stmt = mysqli_prepare(
                 $conn,
-                'INSERT INTO expenses (expense_id, expense_name, funding_account, month, year, amount, narration, transaction_date'
+                'INSERT INTO expenses (company_name, expense_id, expense_name, funding_account, month, year, amount, narration, transaction_date'
                 . (psFxHasColumn($conn, 'expenses', 'currency') ? ', currency, base_currency, fx_rate, fx_rate_ids, fx_path, base_amount' : '') . ')
-                 VALUES (\'\', ?, ' . $v['currency'] . ', NOW(), NOW(), ?, ?, CURDATE()'
+                 VALUES (?, \'\', ?, ' . $v['currency'] . ', NOW(), NOW(), ?, ?, CURDATE()'
                 . (psFxHasColumn($conn, 'expenses', 'currency') ? ', ' . implode(', ', $v) . ", '" . $expBase . "'" : '') . ')'
             );
             if (!$stmt) {
                 error_log('new_expense: prepare failed');
                 $error = 'Expense could not be saved.';
             } else {
-                mysqli_stmt_bind_param($stmt, 'sss', $expense_name, $amount, $narration);
+                $expCompany = psExpenseCompany();
+                mysqli_stmt_bind_param($stmt, 'ssss', $expCompany, $expense_name, $amount, $narration);
                 if (mysqli_stmt_execute($stmt)) {
                     $success = 'New expense recorded successfully!';
                     $expense_name = $amount = $narration = '';

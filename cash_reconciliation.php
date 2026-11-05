@@ -11,6 +11,7 @@ require_once __DIR__ . '/includes/cash_reconciliation.php';
 require_once __DIR__ . '/includes/ps_layout.php';
 require_once __DIR__ . '/includes/product_master.php';
 require_once __DIR__ . '/includes/cash_controls.php';
+require_once __DIR__ . '/includes/operator_scope.php';
 require_once __DIR__ . '/includes/till_closure.php';
 
 ini_set('display_errors', '0');
@@ -405,7 +406,15 @@ mysqli_close($conn);
         <div class="ps-card">
             <div class="ps-card-header">
                 <h2 class="ps-card-title">Reconciliation history</h2>
-                <p class="ps-card-desc"><?php echo $isAdmin ? 'Branch-scoped history for authorised branches.' : 'Working branch only.'; ?></p>
+                <p class="ps-card-desc"><?php
+                    if ($isAdmin) {
+                        echo 'Branch-scoped history for authorised branches.';
+                    } elseif (function_exists('psOperatorCashScoped') && psOperatorCashScoped()) {
+                        echo 'Your cash counts only.';
+                    } else {
+                        echo 'Working branch only.';
+                    }
+                ?></p>
             </div>
             <div class="ps-card-content">
             <?php if ($isAdmin): ?>
@@ -421,7 +430,9 @@ mysqli_close($conn);
                     </select>
                 </form>
             <?php else: ?>
-                <p class="ps-page-lead">Showing reconciliations for your working branch only.</p>
+                <p class="ps-page-lead"><?php echo (function_exists('psOperatorCashScoped') && psOperatorCashScoped())
+                    ? 'Showing only cash counts you posted.'
+                    : 'Showing reconciliations for your working branch only.'; ?></p>
             <?php endif; ?>
 
             <?php if (!$history): ?>

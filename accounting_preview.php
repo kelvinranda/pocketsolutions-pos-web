@@ -67,13 +67,32 @@ if (empty($preview['ok'])) {
     $preview = null;
 }
 $branchOptions = $isAdmin ? psBranchAuthorisedRegisteredNames($conn) : [];
-mysqli_close($conn);
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
 };
-$money = static function ($v): string {
-    return number_format((float)$v, 2, '.', ',');
+// 2026-10-21: journals are in the company base (each source converted at its own stored rate).
+require_once __DIR__ . '/includes/fx_report.php';
+$fx = ['view' => PS_FXR_CONSOLIDATED] + psFxrContext($conn, []);
+$money = static function ($v) use ($conn, $fx): string {
+    return htmlspecialchars(psFxFormat($conn, $v ?? 0, $fx['base']), ENT_QUOTES, 'UTF-8');
+};
+// A journal amount with its source document's currency and stored rate (marker + tooltip when converted).
+$E = static function (array $e) use ($conn, $fx): string {
+    $cur = (string)($e['txn_currency'] ?? '');
+    if ($cur === '' || $cur === $fx['base']) {
+        return htmlspecialchars(psFxFormat($conn, $e['amount'] ?? 0, $fx['base']), ENT_QUOTES, 'UTF-8');
+    }
+    return psFxrOne($conn, $fx, $cur, $e['txn_amount'] ?? null, $e['amount'] ?? null,
+        ['rate' => (string)($e['fx_rate'] ?? ''), 'ref' => trim((string)($e['source_type'] ?? '') . ' #' . (string)($e['source_id'] ?? '') . ' ' . (string)($e['doc_number'] ?? ''))]);
+};
+$fxMixOf = static function (array $entries) use ($fx): array {
+    $mix = [];
+    foreach ($entries as $e) {
+        $cur = (string)($e['txn_currency'] ?? '');
+        psFxrAdd($mix, $fx, $cur === '' ? $fx['base'] : $cur, ($e['txn_amount'] ?? null) !== null && $cur !== '' ? $e['txn_amount'] : ($e['amount'] ?? 0), $e['amount'] ?? null, ['rate' => (string)($e['fx_rate'] ?? '')]);
+    }
+    return $mix;
 };
 ?>
 <!DOCTYPE html>
@@ -190,7 +209,7 @@ $money = static function ($v): string {
                 <td><?php echo $h($e['branch'] !== '' ? $e['branch'] : '(unallocated)'); ?></td>
                 <td><?php echo $h($e['debit_account_code'] . ' ' . $e['debit_account_name']); ?></td>
                 <td><?php echo $h($e['credit_account_code'] . ' ' . $e['credit_account_name']); ?></td>
-                <td><?php echo $money($e['amount']); ?></td>
+                <td class="num"><?php echo $E($e); ?></td>
                 <td><?php echo $h($e['payment_method']); ?></td>
             </tr>
             <?php endforeach; ?>
@@ -213,7 +232,7 @@ $money = static function ($v): string {
             <tr>
                 <td><?php echo $h(($s['source_type'] ?? '') . ' #' . ($s['source_id'] ?? '')); ?></td>
                 <td><?php echo $h($s['doc_number'] ?? ''); ?></td>
-                <td><?php echo $money($s['amount'] ?? 0); ?></td>
+                <td class="num"><?php $sc = (string)($s['txn_currency'] ?? ''); echo $sc !== '' && $sc !== $fx['base'] ? htmlspecialchars(psFxFormat($conn, $s['txn_amount'] ?? $s['amount'] ?? 0, $sc), ENT_QUOTES, 'UTF-8') : $money($s['amount'] ?? 0); ?></td>
                 <td><?php echo $h(implode(', ', $s['exceptions'] ?? [])); ?></td>
                 <td><?php echo $h(implode(', ', $s['missing_mappings'] ?? [])); ?></td>
             </tr>
@@ -247,6 +266,7 @@ $money = static function ($v): string {
     </div>
 </section>
 <?php endif; ?>
-<?php ps_close(); ?>
+<?php if (!empty($preview['entries'])) { echo psFxrSummary($conn, $fx, $fxMixOf($preview['entries']), 'Journal amounts by source currency', ['note' => 'Each journal is converted into ' . $fx['base'] . ' at the rate stored with its source document; the consolidated column equals the journal amounts above.']); } ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

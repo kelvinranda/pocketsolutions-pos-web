@@ -567,6 +567,10 @@ function psCustomerCreditControlDashboard(mysqli $conn, array $filters = []): ar
     $significant = [];
     $customersWithOutstanding = 0;
     $overdueReceivablesTotal = 0.0;
+    // 2026-10-21: accounts are in different currencies; overdue receivables are totalled per currency (never added).
+    require_once __DIR__ . '/fx_report.php';
+    $ccCtx = psFxrContext($conn, []);
+    $overdueMix = [];
     $onHoldCount = 0;
     $atExceedingCount = 0;
 
@@ -642,6 +646,7 @@ function psCustomerCreditControlDashboard(mysqli $conn, array $filters = []): ar
             'overdue_amount' => number_format($overdueAmt, 2, '.', ''),
             'total_outstanding' => number_format($totalOutstanding, 2, '.', ''),
             'primary_overdue_bucket' => $primaryOverdueBucket,
+            'currency' => (string)($ageingByAccount[$aid]['currency'] ?? psCustomerAccountRowCurrency($conn, $acct)),
         ];
 
         if ($totalOutstanding > 0.00001) {
@@ -649,6 +654,7 @@ function psCustomerCreditControlDashboard(mysqli $conn, array $filters = []): ar
         }
         if ($overdueAmt > 0.00001) {
             $overdueReceivablesTotal += $overdueAmt;
+            psFxrAdd($overdueMix, $ccCtx, $entry['currency'], number_format($overdueAmt, 2, '.', ''), $entry['currency'] === $ccCtx['base'] ? number_format($overdueAmt, 2, '.', '') : null);
             $overdue[] = $entry;
         }
         if ($cStatus === PS_CUST_ACCT_CREDIT_ON_HOLD) {
@@ -706,6 +712,7 @@ function psCustomerCreditControlDashboard(mysqli $conn, array $filters = []): ar
         'summary' => [
             'customers_with_outstanding' => $customersWithOutstanding,
             'overdue_receivables' => number_format($overdueReceivablesTotal, 2, '.', ''),
+            'fx_overdue' => $overdueMix,
             'on_hold_count' => $onHoldCount,
             'at_exceeding_limit_count' => $atExceedingCount,
             'recent_activities_30d' => $recentCount,

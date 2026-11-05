@@ -72,7 +72,7 @@ function psStmtQuery(int $accountId, array $overrides = []): string
     return 'customer_account_statement.php?' . http_build_query($q);
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -101,15 +101,19 @@ mysqli_close($conn);
         $pager = $statement['pagination'];
         $rows = $statement['rows'] ?? [];
         $st = (string)$h['status'];
+        // Every amount on a statement is in the account's own currency.
+        $acCur = (string)($h['currency'] ?? '');
+        $S = static fn($v): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, $acCur !== '' ? $acCur : psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8');
         ?>
         <dl class="stmt-header">
             <div><dt>Customer</dt><dd><?php echo htmlspecialchars((string)$h['customer_code'] . ' — ' . (string)$h['customer_name'], ENT_QUOTES, 'UTF-8'); ?></dd></div>
             <div><dt>Account</dt><dd class="mono"><?php echo htmlspecialchars((string)$h['account_number'], ENT_QUOTES, 'UTF-8'); ?></dd></div>
             <div><dt>Status</dt><dd><?php echo htmlspecialchars(psCustomerAccountStatusLabel($st), ENT_QUOTES, 'UTF-8'); ?></dd></div>
-            <div><dt>Credit limit</dt><dd class="num"><?php echo htmlspecialchars((string)$h['credit_limit'], ENT_QUOTES, 'UTF-8'); ?></dd></div>
-            <div><dt>Current balance</dt><dd class="num mono"><?php echo htmlspecialchars((string)$h['current_balance'], ENT_QUOTES, 'UTF-8'); ?>
+            <div><dt>Currency</dt><dd><strong><?php echo htmlspecialchars($acCur, ENT_QUOTES, 'UTF-8'); ?></strong><?php if (!empty($h['currency_legacy'])): ?> <span class="hint">(account opened before currencies were recorded: treated as <?php echo htmlspecialchars($acCur, ENT_QUOTES, 'UTF-8'); ?>)</span><?php endif; ?> <span class="hint">— all amounts below are in this currency</span></dd></div>
+            <div><dt>Credit limit</dt><dd class="num"><?php echo $S($h['credit_limit']); ?></dd></div>
+            <div><dt>Current balance</dt><dd class="num mono"><?php echo $S($h['current_balance']); ?>
                 <span class="hint">(<?php echo htmlspecialchars((string)$label['label'], ENT_QUOTES, 'UTF-8'); ?>)</span></dd></div>
-            <div><dt>Available credit</dt><dd class="num mono"><?php echo htmlspecialchars((string)$h['available_credit'], ENT_QUOTES, 'UTF-8'); ?></dd></div>
+            <div><dt>Available credit</dt><dd class="num mono"><?php echo $S($h['available_credit']); ?></dd></div>
         </dl>
 
         <form method="GET" action="" class="stmt-toolbar">
@@ -147,10 +151,10 @@ mysqli_close($conn);
         </form>
 
         <div class="stmt-summary">
-            <div>Opening: <strong class="mono"><?php echo htmlspecialchars((string)$statement['opening_balance'], ENT_QUOTES, 'UTF-8'); ?></strong></div>
-            <div>Period debit: <strong class="mono"><?php echo htmlspecialchars((string)$statement['period_debit'], ENT_QUOTES, 'UTF-8'); ?></strong></div>
-            <div>Period credit: <strong class="mono"><?php echo htmlspecialchars((string)$statement['period_credit'], ENT_QUOTES, 'UTF-8'); ?></strong></div>
-            <div>Closing: <strong class="mono"><?php echo htmlspecialchars((string)$statement['closing_balance'], ENT_QUOTES, 'UTF-8'); ?></strong></div>
+            <div>Opening: <strong class="mono"><?php echo $S($statement['opening_balance']); ?></strong></div>
+            <div>Period debit: <strong class="mono"><?php echo $S($statement['period_debit']); ?></strong></div>
+            <div>Period credit: <strong class="mono"><?php echo $S($statement['period_credit']); ?></strong></div>
+            <div>Closing: <strong class="mono"><?php echo $S($statement['closing_balance']); ?></strong></div>
         </div>
 
         <table class="stmt-table">
@@ -175,9 +179,9 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)$row['description'], ENT_QUOTES, 'UTF-8'); ?>
                             <span class="hint">(<?php echo htmlspecialchars((string)$row['entry_type'], ENT_QUOTES, 'UTF-8'); ?>)</span>
                         </td>
-                        <td class="num"><?php echo htmlspecialchars((string)$row['debit'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="num"><?php echo htmlspecialchars((string)$row['credit'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="num mono"><?php echo htmlspecialchars((string)$row['balance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo (float)$row['debit'] != 0.0 ? $S($row['debit']) : ''; ?></td>
+                        <td class="num"><?php echo (float)$row['credit'] != 0.0 ? $S($row['credit']) : ''; ?></td>
+                        <td class="num mono"><?php echo $S($row['balance']); ?></td>
                     </tr>
                 <?php endforeach; ?>
             <?php endif; ?>
@@ -202,6 +206,6 @@ mysqli_close($conn);
         <p class="hint">Open a statement from an account, or choose an account first.</p>
         <p><a href="customer_accounts_list.php">Customer accounts</a></p>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

@@ -49,10 +49,13 @@ if (!$signedIn) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/fx_report.php';
 
 function psCcSectionTable(array $rows, string $emptyMsg): void
 {
+    global $conn;
+    // Amounts are in each account's own currency.
+    $A = static fn($v, $cur): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, psFxNormalizeCode($cur ?? '') ?: psFxLegacyCurrency()), ENT_QUOTES, 'UTF-8');
     if ($rows === []) {
         echo '<p class="hint">' . htmlspecialchars($emptyMsg, ENT_QUOTES, 'UTF-8') . '</p>';
         return;
@@ -71,11 +74,11 @@ function psCcSectionTable(array $rows, string $emptyMsg): void
         echo '<td class="mono">' . htmlspecialchars((string)$r['account_number'], ENT_QUOTES, 'UTF-8') . '</td>';
         echo '<td>' . htmlspecialchars(psCustomerAccountStatusLabel((string)$r['account_status']), ENT_QUOTES, 'UTF-8') . '</td>';
         echo '<td>' . htmlspecialchars(psCustomerAccountCreditStatusLabel((string)$r['credit_status']), ENT_QUOTES, 'UTF-8') . '</td>';
-        echo '<td class="num">' . htmlspecialchars((string)$r['balance'], ENT_QUOTES, 'UTF-8') . '</td>';
-        echo '<td class="num">' . htmlspecialchars((string)$r['credit_limit'], ENT_QUOTES, 'UTF-8') . '</td>';
+        echo '<td class="num">' . $A($r['balance'], $r['currency'] ?? null) . '</td>';
+        echo '<td class="num">' . $A($r['credit_limit'], $r['currency'] ?? null) . '</td>';
         echo '<td class="num">' . htmlspecialchars($utilLabel, ENT_QUOTES, 'UTF-8') . '</td>';
-        echo '<td class="num">' . htmlspecialchars((string)$r['overdue_amount'], ENT_QUOTES, 'UTF-8') . '</td>';
-        echo '<td class="num">' . htmlspecialchars((string)$r['total_outstanding'], ENT_QUOTES, 'UTF-8') . '</td>';
+        echo '<td class="num">' . $A($r['overdue_amount'], $r['currency'] ?? null) . '</td>';
+        echo '<td class="num">' . $A($r['total_outstanding'], $r['currency'] ?? null) . '</td>';
         echo '<td><a href="customer_account_view.php?id=' . $id . '">Account</a></td>';
         echo '</tr>';
     }
@@ -170,7 +173,7 @@ function psCcSectionTable(array $rows, string $emptyMsg): void
                 </div>
                 <div class="card">
                     <div class="label">Overdue receivables</div>
-                    <div class="value"><?php echo htmlspecialchars((string)$sum['overdue_receivables'], ENT_QUOTES, 'UTF-8'); ?></div>
+                    <div class="value"><?php echo psFxrAmount($conn, psFxrContext($conn, []), $sum['fx_overdue'] ?? [], ['native' => true]); ?></div>
                 </div>
                 <div class="card">
                     <div class="label">On credit hold</div>
@@ -254,6 +257,6 @@ function psCcSectionTable(array $rows, string $emptyMsg): void
             <a href="customer_collection_activity.php">Collection activity</a>
         </p>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

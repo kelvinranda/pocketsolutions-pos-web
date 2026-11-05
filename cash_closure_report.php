@@ -30,6 +30,8 @@ $filters = [
     'till_session_id' => (int)($_GET['till_session_id'] ?? 0),
     'page' => max(1, (int)($_GET['page'] ?? 1)),
     'page_size' => 25,
+    'fx_view' => $_GET['fx_view'] ?? '',
+    'fx_cur' => $_GET['fx_cur'] ?? '',
 ];
 
 if ($signedIn && isset($_GET['export']) && (string)$_GET['export'] === 'csv') {
@@ -57,7 +59,10 @@ if ($signedIn) {
     $error = 'You must be signed in to view this report.';
 }
 
-mysqli_close($conn);
+// Counts are kept per drawer currency and store no exchange rate: always shown in the drawer's own currency.
+$fx = $result['filters']['fx'] ?? psFxrContext($conn, $_GET);
+$C = static fn($v, $cur): string => htmlspecialchars(psFxFormat($conn, $v ?? 0, psFxNormalizeCode($cur ?? '') ?: $fx['base']), ENT_QUOTES, 'UTF-8');
+$N = static fn(?array $mix): string => $mix ? psFxrAmount($conn, $fx, $mix, ['native' => true]) : htmlspecialchars(psFxFormat($conn, 0, $fx['base']), ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -112,15 +117,22 @@ mysqli_close($conn);
                 <?php endforeach; ?>
             </select>
             <button type="submit">Run</button>
+            <?php if ($fx['cur'] !== ''): ?><input type="hidden" name="fx_cur" value="<?php echo htmlspecialchars($fx['cur'], ENT_QUOTES, 'UTF-8'); ?>"><?php endif; ?>
             <button type="submit" name="export" value="csv">Export CSV</button>
         </form>
+        <?php if (!empty($fx['multi'])): $keep = $_GET; unset($keep['export'], $keep['page'], $keep['fx_cur'], $keep['fx_view']); ?>
+        <form method="get" class="fxr-bar no-print"><?php foreach ($keep as $kk => $kv): if (!is_array($kv)): ?><input type="hidden" name="<?php echo htmlspecialchars($kk, ENT_QUOTES, 'UTF-8'); ?>" value="<?php echo htmlspecialchars((string)$kv, ENT_QUOTES, 'UTF-8'); ?>"><?php endif; endforeach; ?>
+            <label class="fxr-cur">Drawer currency <select name="fx_cur" onchange="this.form.submit()"><option value="">All currencies</option><?php foreach ($fx['currencies'] as $code => $cinfo): ?><option value="<?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?>"<?php echo $fx['cur'] === $code ? ' selected' : ''; ?>><?php echo htmlspecialchars($code, ENT_QUOTES, 'UTF-8'); ?></option><?php endforeach; ?></select></label>
+        </form>
+        <p class="fxr-label">Each till has one cash drawer per currency. Counts are shown in the drawer's own currency and never converted (no exchange rate is stored with a count); totals are per currency.</p>
+        <?php endif; ?>
 
         <?php if ($result): ?>
             <table>
                 <thead>
                     <tr>
                         <th>Session</th><th>Branch</th><th>Till</th><th>Cashier</th><th>Opened</th><th>Closed</th>
-                        <th>Float</th><th>Expected</th><th>Actual</th><th>Variance</th><th>Status</th>
+                        <th>Float</th><th>Expected</th><th>Actual</th><th>Variance<br><small>base drawer, then other drawers</small></th><th>Status</th>
                         <th>Final recon</th><th>Notes</th><th>Closed by</th>
                     </tr>
                 </thead>
@@ -136,10 +148,10 @@ mysqli_close($conn);
                         <td><?php echo htmlspecialchars((string)$row['cashier_email'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['opened_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$row['closed_at'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['opening_float'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['expected_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['actual_cash'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td><?php echo htmlspecialchars((string)$row['variance'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo $C($row['opening_float'], null); ?></td>
+                        <td class="num"><?php echo $C($row['expected_cash'], null); ?></td>
+                        <td class="num"><?php echo $C($row['actual_cash'], null); ?></td>
+                        <td class="num"><?php echo $C($row['variance'], null); ?><?php foreach (($row['currency_counts'] ?? []) as $cc => $cr): ?><br><small><?php echo htmlspecialchars($cc, ENT_QUOTES, 'UTF-8'); ?> drawer: expected <?php echo $C($cr['expected_cash'], $cc); ?>, counted <?php echo $C($cr['counted_cash'], $cc); ?>, variance <?php echo $C($cr['variance'], $cc); ?></small><?php endforeach; ?></td>
                         <td class="<?php echo htmlspecialchars($st, ENT_QUOTES, 'UTF-8'); ?>">
                             <?php echo htmlspecialchars((string)($row['variance_status_label'] ?? $st), ENT_QUOTES, 'UTF-8'); ?>
                         </td>
@@ -166,6 +178,6 @@ mysqli_close($conn);
             <?php endif; ?>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

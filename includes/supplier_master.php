@@ -1,8 +1,8 @@
 <?php
 /**
  * Phase 4A — Supplier master helpers.
- * Global supplier identity by supplier_code (not name). Branch belongs on purchasing/GRV txns.
- * Does not write stock, goods.quantity, or sale_invoice_seq.
+ * Supplier identity is supplier_code within the signed-in company (same pattern as customers).
+ * Branch belongs on purchasing/GRV txns. Does not write stock, goods.quantity, or sale_invoice_seq.
  */
 
 const PS_SUPPLIER_STATUS_ACTIVE = 'ACTIVE';
@@ -26,8 +26,7 @@ function psEnsureSupplierMasterSchema(mysqli $conn): bool
     mysqli_report(MYSQLI_REPORT_OFF);
     $check = mysqli_query($conn, 'SELECT 1 FROM supplier_master LIMIT 0');
     if ($check) {
-        $ready = true;
-        return true;
+        return $ready = psSupplierEnsureExtraColumns($conn) && psSupplierCompanyMigrate($conn);
     }
     $sql = "CREATE TABLE IF NOT EXISTS supplier_master (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -40,16 +39,233 @@ function psEnsureSupplierMasterSchema(mysqli $conn): bool
         status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
-        UNIQUE KEY uniq_supplier_master_code (supplier_code),
+        company_name VARCHAR(250) NULL DEFAULT NULL,
+        UNIQUE KEY uniq_supplier_master_company_code (company_name, supplier_code),
         KEY idx_supplier_master_name (supplier_name),
-        KEY idx_supplier_master_status (status)
+        KEY idx_supplier_master_status (status),
+        KEY idx_supplier_master_company (company_name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
     if (!mysqli_query($conn, $sql)) {
         error_log('supplier_master schema was not created');
         return false;
     }
-    $ready = true;
+    return $ready = psSupplierEnsureExtraColumns($conn) && psSupplierCompanyMigrate($conn);
+}
+
+/** 2026-10-24: tax / registration numbers, payment terms and notes (all optional). */
+function psSupplierExtraColumns(): array
+{
+    return [
+        'tax_number' => "VARCHAR(64) NOT NULL DEFAULT ''",
+        'registration_number' => "VARCHAR(64) NOT NULL DEFAULT ''",
+        'payment_terms' => "VARCHAR(120) NOT NULL DEFAULT ''",
+        'notes' => 'TEXT NULL',
+    ];
+}
+
+function psSupplierEnsureExtraColumns(mysqli $conn): bool
+{
+    $have = [];
+    $res = mysqli_query($conn, 'SHOW COLUMNS FROM supplier_master');
+    while ($res && ($r = mysqli_fetch_assoc($res))) {
+        $have[$r['Field']] = true;
+    }
+    foreach (psSupplierExtraColumns() as $col => $def) {
+        if (!isset($have[$col]) && !mysqli_query($conn, "ALTER TABLE supplier_master ADD COLUMN $col $def")
+            && mysqli_errno($conn) !== 1060) {
+            error_log('supplier_master column was not added');
+            return false;
+        }
+    }
     return true;
+}
+
+/**
+ * 2026-10-24 — suppliers belong to one company, same as customers.
+ * Adds company_name once, fills older rows from the creator's user company, then from PO/GRV branch.
+ * Supplier code is unique within a company. Blank-company rows stay hidden from company users.
+ * Historical PO/GRV supplier_id values are not rewritten.
+ */
+function psSupplierCompanyMigrate(mysqli $conn): bool
+{
+    static $done = false;
+    if ($done) {
+        return true;
+    }
+    $done = true;
+    $has = mysqli_query($conn, "SHOW COLUMNS FROM supplier_master LIKE 'company_name'");
+    if (!$has || mysqli_num_rows($has) === 0) {
+        if (!mysqli_query($conn, 'ALTER TABLE supplier_master ADD COLUMN company_name VARCHAR(250) NULL DEFAULT NULL, ADD KEY idx_supplier_master_company (company_name)')
+            && mysqli_errno($conn) !== 1060) {
+            error_log('supplier_master: company column was not added: #' . mysqli_errno($conn));
+            $done = false;
+            return false;
+        }
+    }
+    psSupplierCompanyBackfill($conn);
+    $idx = mysqli_query($conn, "SHOW INDEX FROM supplier_master WHERE Key_name = 'uniq_supplier_master_company_code'");
+    if (!$idx || mysqli_num_rows($idx) === 0) {
+        if (mysqli_query($conn, 'ALTER TABLE supplier_master ADD UNIQUE KEY uniq_supplier_master_company_code (company_name, supplier_code)')
+            || mysqli_errno($conn) === 1061) {
+            mysqli_query($conn, 'ALTER TABLE supplier_master DROP INDEX uniq_supplier_master_code');
+        }
+    } else {
+        mysqli_query($conn, 'ALTER TABLE supplier_master DROP INDEX uniq_supplier_master_code');
+    }
+    return true;
+}
+
+/**
+ * Fill company_name for suppliers that have none.
+ * Creator first (supplier_audit CREATE → users), then majority company from PO/GRV branch.
+ */
+function psSupplierCompanyBackfill(mysqli $conn): void
+{
+    $blank = mysqli_query($conn, "SELECT id FROM supplier_master WHERE company_name IS NULL OR company_name = '' LIMIT 1");
+    if (!$blank || mysqli_num_rows($blank) === 0) {
+        return;
+    }
+
+    $users = [];
+    $u = mysqli_query($conn, "SELECT email, company_name FROM users WHERE company_name IS NOT NULL AND company_name <> ''");
+    while ($u && ($row = mysqli_fetch_assoc($u))) {
+        $users[strtolower(trim((string)$row['email']))] = trim((string)$row['company_name']);
+    }
+
+    $upd = mysqli_prepare(
+        $conn,
+        "UPDATE supplier_master SET company_name = ? WHERE id = ? AND (company_name IS NULL OR company_name = '')"
+    );
+    if (!$upd) {
+        error_log('supplier_master: company backfill prepare failed: #' . mysqli_errno($conn));
+        return;
+    }
+
+    $auditOk = mysqli_query($conn, 'SELECT 1 FROM supplier_audit LIMIT 0');
+    if ($auditOk) {
+        $res = mysqli_query($conn, "SELECT supplier_id, changed_by FROM supplier_audit WHERE action = 'CREATE'");
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $co = $users[strtolower(trim((string)$row['changed_by']))] ?? '';
+            $sid = (int)$row['supplier_id'];
+            if ($co === '' || $sid < 1) {
+                continue;
+            }
+            mysqli_stmt_bind_param($upd, 'si', $co, $sid);
+            if (!mysqli_stmt_execute($upd)) {
+                error_log('supplier_master: company backfill audit write failed: #' . mysqli_errno($conn));
+            }
+        }
+    }
+
+    $branchCo = [];
+    $hasBranchCo = mysqli_query($conn, "SHOW COLUMNS FROM branchies LIKE 'company_name'");
+    if ($hasBranchCo && mysqli_num_rows($hasBranchCo) > 0) {
+        $b = mysqli_query($conn, "SELECT branch_name, company_name FROM branchies WHERE company_name IS NOT NULL AND company_name <> ''");
+        while ($b && ($row = mysqli_fetch_assoc($b))) {
+            $branchCo[strtolower(trim((string)$row['branch_name']))] = trim((string)$row['company_name']);
+        }
+    }
+
+    $votes = [];
+    foreach (['purchase_orders' => 'SELECT supplier_id, branch FROM purchase_orders WHERE supplier_id > 0',
+        'goods_receipts' => 'SELECT supplier_id, branch FROM goods_receipts WHERE supplier_id IS NOT NULL AND supplier_id > 0'] as $table => $sql) {
+        $exists = mysqli_query($conn, 'SELECT 1 FROM ' . $table . ' LIMIT 0');
+        if (!$exists) {
+            continue;
+        }
+        $res = mysqli_query($conn, $sql);
+        while ($res && ($row = mysqli_fetch_assoc($res))) {
+            $sid = (int)$row['supplier_id'];
+            $co = $branchCo[strtolower(trim((string)$row['branch']))] ?? '';
+            if ($sid < 1 || $co === '') {
+                continue;
+            }
+            if (!isset($votes[$sid])) {
+                $votes[$sid] = [];
+            }
+            $votes[$sid][$co] = ($votes[$sid][$co] ?? 0) + 1;
+        }
+    }
+    foreach ($votes as $sid => $byCo) {
+        arsort($byCo);
+        $co = (string)array_key_first($byCo);
+        if ($co === '') {
+            continue;
+        }
+        mysqli_stmt_bind_param($upd, 'si', $co, $sid);
+        if (!mysqli_stmt_execute($upd)) {
+            error_log('supplier_master: company backfill document write failed: #' . mysqli_errno($conn));
+        }
+    }
+    mysqli_stmt_close($upd);
+}
+
+/**
+ * The company whose suppliers the caller may see: the stand-in user's company during desktop sync,
+ * otherwise the signed-in company. '' only outside a company (platform console, CLI).
+ */
+function psSupplierCompany(mysqli $conn): string
+{
+    static $byActor = [];
+    if (function_exists('psActorOverride') && ($a = psActorOverride()) !== null) {
+        $key = strtolower($a);
+        if (!array_key_exists($key, $byActor)) {
+            $stmt = mysqli_prepare($conn, 'SELECT company_name FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?)) LIMIT 1');
+            $co = '';
+            if ($stmt) {
+                mysqli_stmt_bind_param($stmt, 's', $a);
+                mysqli_stmt_execute($stmt);
+                $r = mysqli_stmt_get_result($stmt);
+                $row = $r ? mysqli_fetch_assoc($r) : null;
+                mysqli_stmt_close($stmt);
+                $co = trim((string)($row['company_name'] ?? ''));
+            }
+            $byActor[$key] = $co;
+        }
+        return $byActor[$key];
+    }
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return '';
+    }
+    return trim((string)($_SESSION['the_company'] ?? ''));
+}
+
+/** SQL condition limiting supplier_master rows (optionally aliased) to the caller's company. */
+function psSupplierCompanySql(mysqli $conn, string $alias = ''): string
+{
+    $co = psSupplierCompany($conn);
+    if ($co === '') {
+        $signedIn = session_status() === PHP_SESSION_ACTIVE && trim((string)($_SESSION['logger'] ?? '')) !== '';
+        $actor = function_exists('psActorOverride') && psActorOverride() !== null;
+        return ($signedIn || $actor) ? '0' : '1';
+    }
+    $col = ($alias !== '' ? $alias . '.' : '') . 'company_name';
+    return $col . " = '" . mysqli_real_escape_string($conn, $co) . "'";
+}
+
+/**
+ * Validate the optional extra fields.
+ *
+ * @return array{ok:bool,error?:string,values?:array<string,string>}
+ */
+function psSupplierValidateExtra(array $data): array
+{
+    $limits = ['tax_number' => ['Tax number', 64], 'registration_number' => ['Registration number', 64],
+        'payment_terms' => ['Payment terms', 120], 'notes' => ['Notes', 2000]];
+    $out = [];
+    foreach ($limits as $field => [$label, $max]) {
+        $check = psValidateSupplierOptionalText((string)($data[$field] ?? ''), $label, $max);
+        if (!$check['ok']) {
+            return ['ok' => false, 'error' => $check['error']];
+        }
+        $out[$field] = $check['value'];
+    }
+    foreach (['tax_number', 'registration_number'] as $field) {
+        if ($out[$field] !== '' && !preg_match('/^[A-Za-z0-9][A-Za-z0-9 .\/\-]*$/', $out[$field])) {
+            return ['ok' => false, 'error' => $limits[$field][0] . ' may use letters, numbers, spaces, dot, slash or hyphen.'];
+        }
+    }
+    return ['ok' => true, 'values' => $out];
 }
 
 /**
@@ -124,7 +340,7 @@ function psSupplierStatusLabel(string $status): string
 }
 
 /**
- * Validate supplier code: required, trimmed, unique-scope GLOBAL, safe characters.
+ * Validate supplier code: required, trimmed, unique within the signed-in company, safe characters.
  */
 function psValidateSupplierCode(string $raw): array
 {
@@ -192,6 +408,10 @@ function psSupplierAuditFieldNames(): array
         'phone',
         'email',
         'address',
+        'tax_number',
+        'registration_number',
+        'payment_terms',
+        'notes',
         'status',
     ];
 }
@@ -206,7 +426,7 @@ function psSupplierAuditNormalizeValue(string $field, $raw): ?string
         return $value === '' ? null : $value;
     }
     if ($raw === null) {
-        return null;
+        return array_key_exists($field, psSupplierExtraColumns()) ? '' : null;
     }
     return trim((string)$raw);
 }
@@ -359,12 +579,17 @@ function psSupplierAuditRecordChanges(mysqli $conn, array $meta, array $changes)
     return true;
 }
 
-function psSupplierById(mysqli $conn, int $id): ?array
+function psSupplierById(mysqli $conn, int $id, bool $requireCompany = true): ?array
 {
     if ($id < 1 || !psEnsureSupplierMasterSchema($conn)) {
         return null;
     }
-    $stmt = mysqli_prepare($conn, 'SELECT * FROM supplier_master WHERE id = ? LIMIT 1');
+    $sql = 'SELECT * FROM supplier_master WHERE id = ?';
+    if ($requireCompany) {
+        $sql .= ' AND ' . psSupplierCompanySql($conn);
+    }
+    $sql .= ' LIMIT 1';
+    $stmt = mysqli_prepare($conn, $sql);
     if (!$stmt) {
         return null;
     }
@@ -376,13 +601,22 @@ function psSupplierById(mysqli $conn, int $id): ?array
     return $row ?: null;
 }
 
+/** Load by id for an already-authorised PO/GRV. Does not hide another company's historical supplier card. */
+function psSupplierByIdForDocument(mysqli $conn, int $id): ?array
+{
+    return psSupplierById($conn, $id, false);
+}
+
 function psSupplierByCode(mysqli $conn, string $code): ?array
 {
     $code = trim($code);
     if ($code === '' || !psEnsureSupplierMasterSchema($conn)) {
         return null;
     }
-    $stmt = mysqli_prepare($conn, 'SELECT * FROM supplier_master WHERE supplier_code = ? LIMIT 1');
+    $stmt = mysqli_prepare(
+        $conn,
+        'SELECT * FROM supplier_master WHERE supplier_code = ? AND ' . psSupplierCompanySql($conn) . ' LIMIT 1'
+    );
     if (!$stmt) {
         return null;
     }
@@ -400,10 +634,11 @@ function psSupplierCodeExists(mysqli $conn, string $code, int $excludeId = 0): b
     if ($code === '' || !psEnsureSupplierMasterSchema($conn)) {
         return false;
     }
+    $scope = psSupplierCompanySql($conn);
     if ($excludeId > 0) {
         $stmt = mysqli_prepare(
             $conn,
-            'SELECT id FROM supplier_master WHERE supplier_code = ? AND id <> ? LIMIT 1'
+            'SELECT id FROM supplier_master WHERE supplier_code = ? AND id <> ? AND ' . $scope . ' LIMIT 1'
         );
         if (!$stmt) {
             return false;
@@ -412,7 +647,7 @@ function psSupplierCodeExists(mysqli $conn, string $code, int $excludeId = 0): b
     } else {
         $stmt = mysqli_prepare(
             $conn,
-            'SELECT id FROM supplier_master WHERE supplier_code = ? LIMIT 1'
+            'SELECT id FROM supplier_master WHERE supplier_code = ? AND ' . $scope . ' LIMIT 1'
         );
         if (!$stmt) {
             return false;
@@ -441,7 +676,7 @@ function psActiveSuppliersForSelect(mysqli $conn): array
         $conn,
         'SELECT id, supplier_code, supplier_name, contact_person, phone, email, address, status
          FROM supplier_master
-         WHERE status = ?
+         WHERE status = ? AND ' . psSupplierCompanySql($conn) . '
          ORDER BY supplier_name, supplier_code'
     );
     if (!$stmt) {
@@ -472,7 +707,7 @@ function psSupplierList(mysqli $conn, string $search = '', string $statusFilter 
     if (!in_array($statusFilter, ['all', 'active', 'inactive'], true)) {
         $statusFilter = 'all';
     }
-    $sql = 'SELECT * FROM supplier_master WHERE 1=1';
+    $sql = 'SELECT * FROM supplier_master WHERE ' . psSupplierCompanySql($conn);
     $types = '';
     $params = [];
     if ($statusFilter === 'active') {
@@ -510,6 +745,59 @@ function psSupplierList(mysqli $conn, string $search = '', string $statusFilter 
 }
 
 /**
+ * 2026-10-24 — One page of suppliers, filtered / sorted / counted in SQL.
+ *
+ * @return array{ok:bool,rows:array,total:int,error?:string}
+ */
+function psSupplierListPage(mysqli $conn, string $search, string $statusFilter, string $sort, string $dir, int $page, int $perPage): array
+{
+    if (!psEnsureSupplierMasterSchema($conn)) {
+        return ['ok' => false, 'error' => 'Suppliers could not be loaded.', 'rows' => [], 'total' => 0];
+    }
+    $sorts = ['name' => 'supplier_name', 'code' => 'supplier_code', 'status' => 'status', 'created' => 'created_at', 'terms' => 'payment_terms'];
+    $orderCol = $sorts[$sort] ?? 'supplier_name';
+    $dirSql = strtolower($dir) === 'desc' ? 'DESC' : 'ASC';
+    $where = ' WHERE ' . psSupplierCompanySql($conn);
+    $types = '';
+    $params = [];
+    $statusFilter = strtolower(trim($statusFilter));
+    if ($statusFilter === 'active' || $statusFilter === 'inactive') {
+        $where .= ' AND status = ?';
+        $types .= 's';
+        $params[] = $statusFilter === 'active' ? PS_SUPPLIER_STATUS_ACTIVE : PS_SUPPLIER_STATUS_INACTIVE;
+    }
+    $search = trim($search);
+    if ($search !== '') {
+        $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search) . '%';
+        $where .= ' AND (supplier_code LIKE ? OR supplier_name LIKE ? OR phone LIKE ? OR email LIKE ? OR contact_person LIKE ? OR tax_number LIKE ? OR registration_number LIKE ?)';
+        $types .= 'sssssss';
+        array_push($params, $like, $like, $like, $like, $like, $like, $like);
+    }
+    $run = static function (string $sql) use ($conn, $types, $params) {
+        $stmt = mysqli_prepare($conn, $sql);
+        if (!$stmt) {
+            return null;
+        }
+        if ($types !== '') {
+            mysqli_stmt_bind_param($stmt, $types, ...$params);
+        }
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        $rows = $res ? mysqli_fetch_all($res, MYSQLI_ASSOC) : [];
+        mysqli_stmt_close($stmt);
+        return $rows;
+    };
+    $count = $run('SELECT COUNT(*) AS n FROM supplier_master' . $where);
+    if ($count === null) {
+        return ['ok' => false, 'error' => 'Suppliers could not be loaded.', 'rows' => [], 'total' => 0];
+    }
+    $perPage = max(1, min(200, $perPage));
+    $offset = max(0, ($page - 1) * $perPage);
+    $rows = $run('SELECT * FROM supplier_master' . $where . " ORDER BY $orderCol $dirSql, id $dirSql LIMIT $perPage OFFSET $offset");
+    return ['ok' => $rows !== null, 'rows' => $rows ?? [], 'total' => (int)($count[0]['n'] ?? 0)];
+}
+
+/**
  * Create supplier. Never writes stock.
  *
  * @param array<string,mixed> $data
@@ -523,6 +811,10 @@ function psCreateSupplier(mysqli $conn, array $data): array
     $changedBy = psSessionSupplierUser();
     if ($changedBy === '') {
         return ['ok' => false, 'error' => 'You must be signed in to create a supplier.'];
+    }
+    $supplierCompany = psSupplierCompany($conn);
+    if ($supplierCompany === '') {
+        return ['ok' => false, 'error' => 'Select a company before adding suppliers.'];
     }
 
     $codeCheck = psValidateSupplierCode((string)($data['supplier_code'] ?? ''));
@@ -550,9 +842,14 @@ function psCreateSupplier(mysqli $conn, array $data): array
     if (!$addrCheck['ok']) {
         return ['ok' => false, 'error' => $addrCheck['error']];
     }
+    $extra = psSupplierValidateExtra($data);
+    if (!$extra['ok']) {
+        return ['ok' => false, 'error' => $extra['error']];
+    }
     if (psSupplierCodeExists($conn, $codeCheck['value'])) {
         return ['ok' => false, 'error' => 'That supplier code is already in use.'];
     }
+    $x = $extra['values'];
 
     $code = $codeCheck['value'];
     $name = $nameCheck['value'];
@@ -572,8 +869,8 @@ function psCreateSupplier(mysqli $conn, array $data): array
     $stmt = mysqli_prepare(
         $conn,
         'INSERT INTO supplier_master
-         (supplier_code, supplier_name, contact_person, phone, email, address, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+         (supplier_code, supplier_name, contact_person, phone, email, address, tax_number, registration_number, payment_terms, notes, status, created_at, updated_at, company_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     if (!$stmt) {
         mysqli_rollback($conn);
@@ -582,16 +879,21 @@ function psCreateSupplier(mysqli $conn, array $data): array
     }
     mysqli_stmt_bind_param(
         $stmt,
-        'sssssssss',
+        'ssssssssssssss',
         $code,
         $name,
         $person,
         $phone,
         $email,
         $address,
+        $x['tax_number'],
+        $x['registration_number'],
+        $x['payment_terms'],
+        $x['notes'],
         $status,
         $now,
-        $now
+        $now,
+        $supplierCompany
     );
     if (!mysqli_stmt_execute($stmt)) {
         $errno = mysqli_errno($conn);
@@ -613,6 +915,10 @@ function psCreateSupplier(mysqli $conn, array $data): array
         'phone' => $phone,
         'email' => $email,
         'address' => $address,
+        'tax_number' => $x['tax_number'],
+        'registration_number' => $x['registration_number'],
+        'payment_terms' => $x['payment_terms'],
+        'notes' => $x['notes'],
         'status' => $status,
     ];
     $changes = [];
@@ -687,6 +993,12 @@ function psUpdateSupplier(mysqli $conn, int $id, array $data): array
     if (!$addrCheck['ok']) {
         return ['ok' => false, 'error' => $addrCheck['error']];
     }
+    // Extra fields not posted (older forms) keep their stored values.
+    $extra = psSupplierValidateExtra(array_merge(array_intersect_key($existing, psSupplierExtraColumns()), array_intersect_key($data, psSupplierExtraColumns())));
+    if (!$extra['ok']) {
+        return ['ok' => false, 'error' => $extra['error']];
+    }
+    $x = $extra['values'];
     if (psSupplierCodeExists($conn, $codeCheck['value'], $id)) {
         return ['ok' => false, 'error' => 'That supplier code is already in use.'];
     }
@@ -699,6 +1011,10 @@ function psUpdateSupplier(mysqli $conn, int $id, array $data): array
         'phone' => $phoneCheck['value'],
         'email' => $emailCheck['value'],
         'address' => $addrCheck['value'],
+        'tax_number' => $x['tax_number'],
+        'registration_number' => $x['registration_number'],
+        'payment_terms' => $x['payment_terms'],
+        'notes' => $x['notes'],
         'status' => psSupplierAuditNormalizeValue('status', $existing['status'] ?? PS_SUPPLIER_STATUS_ACTIVE),
     ];
     $changes = psSupplierAuditDiff($before, $after);
@@ -725,7 +1041,8 @@ function psUpdateSupplier(mysqli $conn, int $id, array $data): array
     $stmt = mysqli_prepare(
         $conn,
         'UPDATE supplier_master
-         SET supplier_code = ?, supplier_name = ?, contact_person = ?, phone = ?, email = ?, address = ?, updated_at = ?
+         SET supplier_code = ?, supplier_name = ?, contact_person = ?, phone = ?, email = ?, address = ?,
+             tax_number = ?, registration_number = ?, payment_terms = ?, notes = ?, updated_at = ?
          WHERE id = ?'
     );
     if (!$stmt) {
@@ -735,13 +1052,17 @@ function psUpdateSupplier(mysqli $conn, int $id, array $data): array
     }
     mysqli_stmt_bind_param(
         $stmt,
-        'sssssssi',
+        'sssssssssssi',
         $code,
         $name,
         $person,
         $phone,
         $email,
         $address,
+        $x['tax_number'],
+        $x['registration_number'],
+        $x['payment_terms'],
+        $x['notes'],
         $now,
         $id
     );
@@ -873,10 +1194,11 @@ function psDeleteSupplierBlocked(mysqli $conn, int $id): array
  */
 function psSupplierAuditFetchHistory(mysqli $conn, array $filters = []): array
 {
-    if (!psEnsureSupplierAuditSchema($conn)) {
+    if (!psEnsureSupplierAuditSchema($conn) || !psEnsureSupplierMasterSchema($conn)) {
         return ['ok' => false, 'error' => 'Supplier audit history could not be loaded.', 'rows' => []];
     }
-    $sql = 'SELECT * FROM supplier_audit WHERE 1=1';
+    $sql = 'SELECT * FROM supplier_audit WHERE supplier_id IN (SELECT id FROM supplier_master WHERE '
+        . psSupplierCompanySql($conn) . ')';
     $types = '';
     $params = [];
     $supplierId = (int)($filters['supplier_id'] ?? 0);

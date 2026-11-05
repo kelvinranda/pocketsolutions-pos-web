@@ -24,7 +24,8 @@ if (!$conn) {
 }
 
 mysqli_set_charset($conn, "utf8mb4");
-psBranchRequireAdminRedirect();
+require_once __DIR__ . '/includes/role_permissions.php';
+psRolePermRequire('stock_receive'); // 2026-11-02: company role permissions (was admin only)
 
 
 // ============================================================
@@ -52,242 +53,35 @@ if (!DateTime::createFromFormat('Y-m-d', $date_filter2)) {
 
 
 // ============================================================
-// GRV PER ITEM
+// GRV PER ITEM — 2026-11-02: only this company's branches (psBranchReportScope),
+// summed in memory (the shared grv_report table was emptied by every viewer and mixed companies).
 // ============================================================
-
-function GRV_per_item($conn, $date_filter1, $date_filter2)
-{
-    try {
-
-        // ----------------------------------------------------
-        // TRUNCATE GRV REPORT
-        // ----------------------------------------------------
-
-        $truncateSql = "TRUNCATE TABLE `grv_report`";
-
-        if (!mysqli_query($conn, $truncateSql)) {
-            throw new Exception(
-                "Unable to clear grv_report: " . mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // FIND DISTINCT PRODUCTS
-        // ----------------------------------------------------
-
-        $productSql = "
-            SELECT DISTINCT product AS each_product
-            FROM `goods_receipts`
-            WHERE product <> ''
-            AND product IS NOT NULL
-        ";
-
-        $productResult = mysqli_query($conn, $productSql);
-
-        if (!$productResult) {
-            throw new Exception(
-                "Unable to get products: " . mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // LOOP THROUGH PRODUCTS
-        // ----------------------------------------------------
-
-        while ($productRow = mysqli_fetch_assoc($productResult)) {
-
-            $eachProduct = $productRow['each_product'];
-
-
-            // ------------------------------------------------
-            // COUNT GRV QUANTITY FOR THIS PRODUCT
-            // ------------------------------------------------
-
-            /*
-             * Your original VB.NET code used:
-             *
-             * DATE(date_) = date_filter1
-             *
-             * This PHP version supports the selected
-             * date range.
-             */
-
-            $quantitySql = "
-                SELECT COALESCE(SUM(quantity), 0) AS total_quantity
-                FROM `goods_receipts`
-                WHERE product = ?
-                AND DATE(date_) BETWEEN ? AND ?
-            ";
-
-            $stmt = mysqli_prepare($conn, $quantitySql);
-
-            if (!$stmt) {
-                throw new Exception(
-                    "Prepare error: " . mysqli_error($conn)
-                );
-            }
-
-            mysqli_stmt_bind_param(
-                $stmt,
-                "sss",
-                $eachProduct,
-                $date_filter1,
-                $date_filter2
-            );
-
-            mysqli_stmt_execute($stmt);
-
-            $quantityResult = mysqli_stmt_get_result($stmt);
-
-            $quantityRow = mysqli_fetch_assoc($quantityResult);
-
-            $totalQuantity = $quantityRow['total_quantity'] ?? 0;
-
-            mysqli_stmt_close($stmt);
-
-
-            // ------------------------------------------------
-            // INSERT INTO GRV REPORT
-            // ------------------------------------------------
-
-            /*
-             * Original VB.NET:
-             *
-             * INSERT INTO grv_report
-             * (product,qty,grv_value)
-             * VALUES (...)
-             *
-             * We use a prepared statement here to avoid
-             * SQL injection and quotation problems.
-             */
-
-            $insertSql = "
-                INSERT INTO `grv_report`
-                (
-                    product,
-                    qty,
-                    grv_value
-                )
-                VALUES
-                (
-                    ?,
-                    ?,
-                    ?
-                )
-            ";
-
-            $insertStmt = mysqli_prepare($conn, $insertSql);
-
-            if (!$insertStmt) {
-                throw new Exception(
-                    "Insert prepare error: " . mysqli_error($conn)
-                );
-            }
-
-            /*
-             * Your original program puts the same quantity
-             * into qty and grv_value.
-             */
-
-            $grvValue = $totalQuantity;
-
-            mysqli_stmt_bind_param(
-                $insertStmt,
-                "sii",
-                $eachProduct,
-                $totalQuantity,
-                $grvValue
-            );
-
-            if (!mysqli_stmt_execute($insertStmt)) {
-                throw new Exception(
-                    "Insert error: " . mysqli_stmt_error($insertStmt)
-                );
-            }
-
-            mysqli_stmt_close($insertStmt);
-        }
-
-
-        mysqli_free_result($productResult);
-
-        return true;
-
-    } catch (Exception $e) {
-
-        die(
-            "GRV_per_item ERROR: " .
-            htmlspecialchars($e->getMessage())
-        );
-    }
-}
-
-
-// ============================================================
-// LOAD GRV DATA
-// ============================================================
-
-function load_dataGRV($conn)
-{
-    $sql = "
-        SELECT
-            id,
-            product,
-            qty,
-            grv_value
-        FROM `grv_report`
-        ORDER BY id ASC
-    ";
-
-    $result = mysqli_query($conn, $sql);
-
-    if (!$result) {
-        die(
-            "load_dataGRV ERROR: " .
-            htmlspecialchars(mysqli_error($conn))
-        );
-    }
-
-    return $result;
-}
-
-
-// ============================================================
-// RUN GRV PER ITEM
-// ============================================================
-
-GRV_per_item(
-    $conn,
-    $date_filter1,
-    $date_filter2
-);
-
-
-// ============================================================
-// LOAD THE DATA
-// ============================================================
-
-$result = load_dataGRV($conn);
-
-
-// ============================================================
-// CALCULATE TOTALS
-// ============================================================
-
-$totalQty = 0;
-$totalValue = 0;
 
 $rows = [];
-
-while ($row = mysqli_fetch_assoc($result)) {
-
-    $rows[] = $row;
-
-    $totalQty += (float)$row['qty'];
-
-    $totalValue += (float)$row['grv_value'];
+$totalQty = 0;
+$totalValue = 0;
+$scope = psBranchReportScope($conn);
+$in = !empty($scope['ok']) ? psBranchSqlInList($scope['branches'] ?? []) : null;
+if ($in !== null) {
+    $sql = 'SELECT product, COALESCE(SUM(quantity), 0) AS qty, COALESCE(SUM(quantity * line_cost), 0) AS grv_value
+        FROM goods_receipts
+        WHERE product <> \'\' AND product IS NOT NULL AND DATE(date_) BETWEEN ? AND ? AND branch IN (' . $in['sql'] . ')
+        GROUP BY product ORDER BY product';
+    $stmt = mysqli_prepare($conn, $sql);
+    if ($stmt) {
+        $params = array_merge([$date_filter1, $date_filter2], $in['params']);
+        mysqli_stmt_bind_param($stmt, 'ss' . $in['types'], ...$params);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        $n = 0;
+        while ($row = mysqli_fetch_assoc($res)) {
+            $row['id'] = ++$n;
+            $rows[] = $row;
+            $totalQty += (float)$row['qty'];
+            $totalValue += (float)$row['grv_value'];
+        }
+        mysqli_stmt_close($stmt);
+    }
 }
 
 $h = static function ($v): string {

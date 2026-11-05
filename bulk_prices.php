@@ -12,7 +12,8 @@ require_once __DIR__ . '/includes/product_master.php';
 require_once __DIR__ . '/includes/catalog_setup.php';
 require_once __DIR__ . '/includes/ps_layout.php';
 
-psBranchRequireAdminRedirect('ajax_pos.php');
+require_once __DIR__ . '/includes/role_permissions.php';
+psRolePermRequire('prices_edit'); // 2026-11-02: company role permissions (was admin only)
 mysqli_report(MYSQLI_REPORT_OFF);
 $conn = mysqli_connect($servername, $username, $password, $dbname);
 if (!$conn) {

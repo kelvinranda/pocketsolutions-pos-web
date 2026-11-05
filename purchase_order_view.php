@@ -60,7 +60,7 @@ if (!$signedIn) {
     } else {
         $header = $load['header'];
         $lines = psPoLinesWithReceived($conn, $load['lines']);
-        $supplier = psSupplierById($conn, (int)$header['supplier_id']);
+        $supplier = psSupplierByIdForDocument($conn, (int)$header['supplier_id']);
     }
 }
 
@@ -77,7 +77,7 @@ if ($lines !== []) {
     $grandTotal = $sum;
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -138,15 +138,20 @@ mysqli_close($conn);
                         <td class="num"><?php echo htmlspecialchars((string)($line['ordered_qty'] ?? $line['quantity']), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td class="num"><?php echo htmlspecialchars((string)($line['received_qty'] ?? '0'), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td class="num"><?php echo htmlspecialchars((string)($line['remaining_qty'] ?? $line['quantity']), ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="num"><?php echo htmlspecialchars((string)$line['unit_cost'], ENT_QUOTES, 'UTF-8'); ?></td>
-                        <td class="num"><?php echo htmlspecialchars((string)$line['line_total'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <?php $poCur = psFxNormalizeCode($header['currency'] ?? '') ?: psFxLegacyCurrency(); ?>
+                        <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $line['unit_cost'], $poCur), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $line['line_total'], $poCur), ENT_QUOTES, 'UTF-8'); ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
                 <tfoot>
                     <tr>
                         <th colspan="6" class="num">Order total</th>
-                        <th class="num"><?php echo htmlspecialchars($grandTotal . ' ' . (string)(($header['currency'] ?? '') !== '' ? $header['currency'] : ''), ENT_QUOTES, 'UTF-8'); ?></th>
+                        <th class="num"><?php $poCur = psFxNormalizeCode($header['currency'] ?? '') ?: psFxLegacyCurrency(); echo htmlspecialchars(psFxFormat($conn, $grandTotal, $poCur), ENT_QUOTES, 'UTF-8');
+                            $poRate = (float)($header['fx_rate'] ?? 0); $poBase = psFxBase($conn, psFxSessionCompany());
+                            if ($poCur !== $poBase) {
+                                echo '<br><small class="hint">' . ($poRate > 0 ? htmlspecialchars('≈ ' . psFxFormat($conn, round((float)$grandTotal / $poRate, 2), $poBase) . ' at the stored rate 1 ' . $poBase . ' = ' . rtrim(rtrim((string)$header['fx_rate'], '0'), '.') . ' ' . $poCur, ENT_QUOTES, 'UTF-8') : 'no stored rate') . '</small>';
+                            } ?></th>
                     </tr>
                 </tfoot>
             </table>
@@ -181,6 +186,6 @@ mysqli_close($conn);
             </div>
         <?php endif; ?>
     </div>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

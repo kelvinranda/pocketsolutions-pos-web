@@ -24,7 +24,8 @@ if (!$conn) {
 }
 
 mysqli_set_charset($conn, "utf8mb4");
-psBranchRequireAdminRedirect();
+require_once __DIR__ . '/includes/role_permissions.php';
+psRolePermRequire('sales_view'); // 2026-11-02: company role permissions (was admin only)
 
 
 // ============================================================
@@ -46,244 +47,36 @@ if (!$dateObject || $dateObject->format('Y-m-d') !== $date_filter1) {
 
 
 // ============================================================
-// SALES PER ITEM
-// ============================================================
-
-function sales_per_item($conn, $date_filter1)
-{
-    try {
-
-        // ----------------------------------------------------
-        // TRUNCATE z_reading
-        // ----------------------------------------------------
-
-        $truncateSql = "TRUNCATE TABLE `z_reading`";
-
-        if (!mysqli_query($conn, $truncateSql)) {
-
-            throw new Exception(
-                "Unable to clear z_reading: " .
-                mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // FIND DISTINCT PRODUCTS
-        // ----------------------------------------------------
-
-        $productSql = "
-            SELECT DISTINCT product AS each_product
-            FROM `online_sales`
-            WHERE product <> ''
-            AND product IS NOT NULL
-        ";
-
-        $productResult = mysqli_query($conn, $productSql);
-
-        if (!$productResult) {
-
-            throw new Exception(
-                "Unable to get products: " .
-                mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // PREPARE SALES QUERY
-        // ----------------------------------------------------
-
-        $salesSql = "
-            SELECT COALESCE(SUM(quantity), 0) AS total_quantity
-            FROM `online_sales`
-            WHERE product = ?
-            AND DATE(date_) = ?
-        ";
-
-        $salesStmt = mysqli_prepare(
-            $conn,
-            $salesSql
-        );
-
-        if (!$salesStmt) {
-
-            throw new Exception(
-                "Sales query prepare error: " .
-                mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // PREPARE INSERT QUERY
-        // ----------------------------------------------------
-
-        $insertSql = "
-            INSERT INTO `z_reading`
-            (
-                cashier,
-                total_currency
-            )
-            VALUES
-            (
-                ?,
-                ?
-            )
-        ";
-
-        $insertStmt = mysqli_prepare(
-            $conn,
-            $insertSql
-        );
-
-        if (!$insertStmt) {
-
-            throw new Exception(
-                "Insert query prepare error: " .
-                mysqli_error($conn)
-            );
-        }
-
-
-        // ----------------------------------------------------
-        // PROCESS EACH PRODUCT
-        // ----------------------------------------------------
-
-        while ($productRow = mysqli_fetch_assoc($productResult)) {
-
-            $eachProduct = $productRow['each_product'];
-
-
-            // ----------------------------------------------
-            // GET TOTAL SALES FOR PRODUCT
-            // ----------------------------------------------
-
-            mysqli_stmt_bind_param(
-                $salesStmt,
-                "ss",
-                $eachProduct,
-                $date_filter1
-            );
-
-            mysqli_stmt_execute($salesStmt);
-
-            $salesResult = mysqli_stmt_get_result(
-                $salesStmt
-            );
-
-            $salesRow = mysqli_fetch_assoc(
-                $salesResult
-            );
-
-            $totalQuantity = (int)(
-                $salesRow['total_quantity'] ?? 0
-            );
-
-
-            // ----------------------------------------------
-            // INSERT INTO z_reading
-            // ----------------------------------------------
-
-            mysqli_stmt_bind_param(
-                $insertStmt,
-                "si",
-                $eachProduct,
-                $totalQuantity
-            );
-
-            if (!mysqli_stmt_execute($insertStmt)) {
-
-                throw new Exception(
-                    "Insert error for product " .
-                    $eachProduct .
-                    ": " .
-                    mysqli_stmt_error($insertStmt)
-                );
-            }
-        }
-
-
-        mysqli_stmt_close($salesStmt);
-        mysqli_stmt_close($insertStmt);
-
-        mysqli_free_result($productResult);
-
-
-        return true;
-
-    } catch (Exception $e) {
-
-        die(
-            "sales_per_item ERROR: " .
-            htmlspecialchars($e->getMessage())
-        );
-    }
-}
-
-
-// ============================================================
-// LOAD Z_READING DATA
-// ============================================================
-
-function load_data($conn)
-{
-    $sql = "
-        SELECT
-            id,
-            cashier,
-            total_currency
-        FROM `z_reading`
-        ORDER BY id ASC
-    ";
-
-    $result = mysqli_query(
-        $conn,
-        $sql
-    );
-
-    if (!$result) {
-
-        die(
-            "load_data ERROR: " .
-            htmlspecialchars(mysqli_error($conn))
-        );
-    }
-
-    return $result;
-}
-
-
-// ============================================================
-// RUN SALES PER ITEM
-// ============================================================
-
-sales_per_item(
-    $conn,
-    $date_filter1
-);
-
-
-// ============================================================
-// LOAD DATA
-// ============================================================
-
-$result = load_data($conn);
-
-
-// ============================================================
-// STORE RESULTS
+// SALES PER ITEM — 2026-11-02: only this company's branches (psBranchReportScope), summed in memory.
+// (The shared z_reading table was emptied by every viewer and mixed every company's sales.)
 // ============================================================
 
 $rows = [];
-
 $totalSold = 0;
-
-while ($row = mysqli_fetch_assoc($result)) {
-
-    $rows[] = $row;
-
-    $totalSold += (float)$row['total_currency'];
+$scope = psBranchReportScope($conn);
+$in = !empty($scope['ok']) ? psBranchSqlInList($scope['branches'] ?? []) : null;
+if ($in !== null) {
+    $sql = 'SELECT s.product AS cashier, COALESCE(SUM(s.quantity), 0) AS total_currency
+        FROM online_sales s
+        LEFT JOIN online_sales_ref r ON r.invoice_number = s.invoice_number
+        WHERE s.product <> \'\' AND s.product IS NOT NULL AND DATE(s.date_) = ?
+          AND s.branch IN (' . $in['sql'] . ')
+          AND UPPER(TRIM(COALESCE(r.status, \'\'))) <> \'CANCELLED\'
+        GROUP BY s.product HAVING total_currency <> 0 ORDER BY s.product';
+    $stmt = mysqli_prepare($conn, $sql);
+    if ($stmt) {
+        $params = array_merge([$date_filter1], $in['params']);
+        mysqli_stmt_bind_param($stmt, 's' . $in['types'], ...$params);
+        mysqli_stmt_execute($stmt);
+        $res = mysqli_stmt_get_result($stmt);
+        $n = 0;
+        while ($row = mysqli_fetch_assoc($res)) {
+            $row['id'] = ++$n;
+            $rows[] = $row;
+            $totalSold += (float)$row['total_currency'];
+        }
+        mysqli_stmt_close($stmt);
+    }
 }
 
 $h = static function ($v): string {

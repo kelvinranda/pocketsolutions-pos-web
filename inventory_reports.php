@@ -5,6 +5,7 @@
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/inventory_reporting.php';
+require_once __DIR__ . '/includes/product_packs.php';
 require_once __DIR__ . '/includes/ps_layout.php';
 
 $conn = mysqli_connect($servername, $username, $password, $dbname);
@@ -81,7 +82,9 @@ if (empty($norm['ok'])) {
     }
 }
 
-mysqli_close($conn);
+require_once __DIR__ . '/includes/currency.php';
+$invBase = psFxBase($conn, psFxSessionCompany());
+// 2026-10-28: connection kept for the pack breakdown of stock figures; closed at the end of the page.
 
 $h = static function ($v): string {
     return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
@@ -206,7 +209,7 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
             <thead>
             <tr>
                 <th>Product ID</th><th>Product</th><th>Branch</th><th>Qty</th><th>Source</th>
-                <th>Reorder</th><th>Cost</th><th>Value</th><th>Status</th>
+                <th>Reorder</th><th>Cost (<?php echo $h($invBase ?? ''); ?>)</th><th>Value (<?php echo $h($invBase ?? ''); ?>)</th><th>Status</th>
             </tr>
             </thead>
             <tbody>
@@ -223,7 +226,8 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
                     <td><?php echo $h($row['product_id']); ?></td>
                     <td><?php echo $h($row['product']); ?></td>
                     <td><?php echo $h($row['branch']); ?></td>
-                    <td><?php echo $h($row['qty']); ?></td>
+                    <td><?php echo $h($row['qty']); ?><?php $pkNote = psPackStockNote($conn, trim((string)($_SESSION['the_company'] ?? '')), (string)$row['product_id'], (string)$row['qty']);
+                        if ($pkNote !== ''): ?><div class="hint" style="margin:0"><?php echo $h($pkNote); ?></div><?php endif; ?></td>
                     <td><?php echo $h($row['qty_source']); ?></td>
                     <td><?php echo $h($row['reorder_level'] ?? ''); ?></td>
                     <td><?php echo $h($row['cost_price'] ?? ''); ?></td>
@@ -258,6 +262,6 @@ $q = static function (array $extra = []) use ($report, $fromDate, $toDate, $bran
             <?php endif; ?>
         </p>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

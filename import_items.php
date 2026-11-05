@@ -52,6 +52,7 @@ mysqli_close($conn);
                   "Pack Size (number, e.g. 500)\n" +
                   "Unit (code or name from Units of Measure, e.g. ml, kg, ea)\n" +
                   "Reorder Level (optional number; blank clears level when column present)\n" +
+                  "Opening Stock (optional; NEW items only — the quantity on hand to start with. Ignored for items that already exist)\n" +
                   "Status (exported for reference — not applied on import; new rows ACTIVE; existing status unchanged)\n" +
                   "Branch (informational only — never overrides the branch chosen below)\n\n" +
                   "Identity is Product ID + the selected branch. Names are never used to match rows.\n" +

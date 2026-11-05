@@ -104,18 +104,21 @@ mysqli_close($conn);
         </form>
 
         <?php if ($kind === 'reprints'): ?>
-            <p class="hint">Every receipt printed again after the sale, newest first (last 7 days unless you pick dates). Many reprints of one receipt, or by one cashier, are worth a look.</p>
+            <p class="hint">Every receipt printed again after the sale, plus approvals and refused attempts, newest first (last 7 days unless you pick dates). Many reprints of one receipt, or by one cashier, are worth a look.</p>
             <table>
-                <thead><tr><th>When</th><th>Receipt</th><th>Branch</th><th>By</th><th>Where</th></tr></thead>
+                <thead><tr><th>When</th><th>Receipt</th><th>Document</th><th>Branch</th><th>Requested by</th><th>Approved by</th><th>Outcome</th><th>Where</th></tr></thead>
                 <tbody>
                 <?php if (empty($reprints)): ?>
-                    <tr><td colspan="5">No reprints in this period.</td></tr>
+                    <tr><td colspan="8">No reprints in this period.</td></tr>
                 <?php else: foreach ($reprints as $rp): ?>
                     <tr>
                         <td><?php echo htmlspecialchars((string)$rp['reprinted_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$rp['invoice_number'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars(str_replace('_', ' ', (string)($rp['document'] ?? 'RECEIPT')), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$rp['branch'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$rp['reprinted_by'], ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td><?php echo htmlspecialchars((string)($rp['approved_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td title="<?php echo htmlspecialchars((string)($rp['note'] ?? ''), ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars((string)($rp['outcome'] ?? 'PRINTED'), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td><?php echo htmlspecialchars((string)$rp['source'], ENT_QUOTES, 'UTF-8'); ?></td>
                     </tr>
                 <?php endforeach; endif; ?>

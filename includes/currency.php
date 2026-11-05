@@ -583,7 +583,7 @@ function psFxCompanyHasTransactions(mysqli $conn, string $company): bool
         "SELECT 1 FROM online_sales_ref r INNER JOIN branchies b ON b.branch_name = r.branch WHERE b.company_name = '$c' LIMIT 1",
         "SELECT 1 FROM goods_receipts_ref g INNER JOIN branchies b ON b.branch_name = g.branch WHERE b.company_name = '$c' LIMIT 1",
         "SELECT 1 FROM customer_account_ledger l INNER JOIN customer_accounts a ON a.id = l.customer_account_id INNER JOIN customer_master m ON m.id = a.customer_master_id WHERE m.company_name = '$c' LIMIT 1",
-        "SELECT 1 FROM expenses e INNER JOIN branchies b ON b.branch_name = e.branch WHERE b.company_name = '$c' LIMIT 1",
+        "SELECT 1 FROM expenses e WHERE e.company_name = '$c' LIMIT 1", // 2026-11-02 expenses.company_name
     ];
     foreach ($checks as $sql) {
         $res = @mysqli_query($conn, $sql);

@@ -66,7 +66,6 @@ $rows = $list['rows'] ?? [];
 
 require_once __DIR__ . '/includes/currency.php';
 $listBaseCurrency = psFxBase($conn, psFxSessionCompany());
-mysqli_close($conn);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -153,7 +152,7 @@ mysqli_close($conn);
                         <td class="<?php echo $stClass; ?>">
                             <?php echo htmlspecialchars(psCustomerAccountStatusLabel($st), ENT_QUOTES, 'UTF-8'); ?>
                         </td>
-                        <td class="num"><?php echo htmlspecialchars((string)$row['balance'] . ' ' . ((string)($row['currency'] ?? '') !== '' ? (string)$row['currency'] : $listBaseCurrency), ENT_QUOTES, 'UTF-8'); ?></td>
+                        <td class="num"><?php echo htmlspecialchars(psFxFormat($conn, $row['balance'], (string)($row['currency'] ?? '') !== '' ? (string)$row['currency'] : $listBaseCurrency), ENT_QUOTES, 'UTF-8'); ?><?php if ((string)($row['currency'] ?? '') === ''): ?> <span class="fxa-tag" title="Account opened before currencies were recorded">legacy</span><?php endif; ?></td>
                         <td><?php echo htmlspecialchars((string)$row['created_at'], ENT_QUOTES, 'UTF-8'); ?></td>
                         <td>
                             <div class="row-actions">
@@ -196,6 +195,6 @@ mysqli_close($conn);
             </table>
         <?php endif; ?>
     <?php endif; ?>
-<?php ps_close(); ?>
+<?php ps_close(); mysqli_close($conn); ?>
 </body>
 </html>

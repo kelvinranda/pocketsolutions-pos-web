@@ -13,7 +13,12 @@ if (!$conn) {
     die('Connection failed.');
 }
 
-psBranchRequireAdminRedirect();
+// 2026-11-02: this diagnostic covers every company's records, so it is for Super Admins only.
+require_once __DIR__ . '/includes/platform.php';
+if (!psPlatformSessionIsSuperAdmin()) {
+    header('Location: admin_dashboard.php');
+    exit;
+}
 psBranchIntegrityEnsureSchema($conn);
 $snap = psBranchIntegritySnapshot($conn);
 $constraintAssess = psBranchIntegrityConstraintAssessment($conn);

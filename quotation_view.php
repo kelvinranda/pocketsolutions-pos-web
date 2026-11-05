@@ -60,7 +60,7 @@ if (($_GET['export'] ?? '') === 'pdf') {
     $mpdf = new \Mpdf\Mpdf(['format' => 'A4', 'margin_left' => 14, 'margin_right' => 14, 'margin_top' => 14, 'margin_bottom' => 14, 'tempDir' => sys_get_temp_dir()]);
     $mpdf->SetTitle('Quotation ' . $quote['quote_number']);
     $mpdf->SetFooter('Quotation ' . $quote['quote_number'] . '||Page {PAGENO} of {nbpg}');
-    $mpdf->WriteHTML('<style>' . psQuoteDocumentCss(true) . '</style>' . $doc);
+    $mpdf->WriteHTML('<style>' . psQuoteDocumentCss(true) . '</style>' . (function_exists('psBranchLabelHtml') ? psBranchLabelHtml($doc) : $doc)); // 2026-11-02 shared branch names
     $mpdf->Output('Quotation_' . preg_replace('/[^A-Za-z0-9_-]/', '_', (string)$quote['quote_number']) . '.pdf', \Mpdf\Output\Destination::DOWNLOAD);
     exit;
 }
