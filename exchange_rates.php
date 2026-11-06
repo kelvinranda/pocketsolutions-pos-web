@@ -26,7 +26,38 @@ if (!empty($_SESSION['ps_fx_notice'])) {
     unset($_SESSION['ps_fx_notice']);
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// 2026-11-06: company switch: split currency (payments and change in another currency at the tills). Admin only.
+require_once __DIR__ . '/includes/cash_controls.php';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['split_payment'])) {
+    // 2026-11-06: company switch: split payment ("Add another payment" at the tills). Admin only.
+    if (!psCsrfValidate()) {
+        $error = 'Invalid security token. Reload and try again.';
+    } else {
+        $r = psSetCompanySplitPayment($conn, $_POST['split_payment'] === '1', (string)($_SESSION['logger'] ?? ''));
+        if (!empty($r['ok'])) {
+            $_SESSION['ps_fx_notice'] = $_POST['split_payment'] === '1'
+                ? 'Split payment turned on: tills show "Add another payment".'
+                : 'Split payment turned off: tills take one payment per sale.';
+            header('Location: exchange_rates.php');
+            exit;
+        }
+        $error = (string)$r['error'];
+    }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['split_currency'])) {
+    if (!psCsrfValidate()) {
+        $error = 'Invalid security token. Reload and try again.';
+    } else {
+        $r = psSetCompanySplitCurrency($conn, $_POST['split_currency'] === '1', (string)($_SESSION['logger'] ?? ''));
+        if (!empty($r['ok'])) {
+            $_SESSION['ps_fx_notice'] = $_POST['split_currency'] === '1'
+                ? 'Split currency turned on: tills can take payments and give change in another currency.'
+                : 'Split currency turned off: tills take every payment and give change in the sale currency.';
+            header('Location: exchange_rates.php');
+            exit;
+        }
+        $error = (string)$r['error'];
+    }
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!psCsrfValidate()) {
         $error = 'Invalid security token. Reload and try again.';
     } elseif (!$mayManage) {
@@ -56,6 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $base = psFxBase($conn, $company);
 $allowed = psFxCompanyCurrencies($conn, $company);
+$splitCurrency = psCompanySplitCurrency($conn, $company);
+$splitPayment = psCompanySplitPayment($conn, $company);
+$mayToggleSplit = psCashControlsLevel() === 'admin';
 $rates = psFxRateList($conn, $company);
 $now = date('Y-m-d H:i:s');
 
@@ -113,6 +147,43 @@ $stateBadge = ['CURRENT' => 'ps-badge-success', 'FUTURE' => 'ps-badge-warning', 
     <?php endif; ?>
 
     <?php if ($mayManage && count($allowed) >= 2): ?>
+    <div class="ps-card">
+        <div class="ps-card-header"><h2 class="ps-card-title">Split payment at the tills</h2>
+            <p class="ps-card-desc">When on, the tills show "Add another payment", so one sale can be paid several ways (e.g. part cash, part EcoCash).
+                When off, every sale takes one payment, as before. Web, desktop and mobile tills.</p></div>
+        <div class="ps-card-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="ps-badge <?php echo $splitPayment ? 'ps-badge-success' : 'ps-badge-warning'; ?>"><?php echo $splitPayment ? 'On' : 'Off'; ?></span>
+            <?php if ($mayToggleSplit): ?>
+            <form method="post" action="exchange_rates.php" style="margin:0">
+                <?php echo psCsrfField(); ?>
+                <input type="hidden" name="split_payment" value="<?php echo $splitPayment ? '0' : '1'; ?>">
+                <button type="submit" class="ps-btn <?php echo $splitPayment ? 'ps-btn-outline' : 'ps-btn-default'; ?>"><?php echo $splitPayment ? 'Turn off' : 'Turn on'; ?></button>
+            </form>
+            <?php else: ?>
+            <span class="ps-muted">Only an admin can change this.</span>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <div class="ps-card">
+        <div class="ps-card-header"><h2 class="ps-card-title">Split currency at the tills</h2>
+            <p class="ps-card-desc">When on, a customer can pay part of a sale in another currency (e.g. USD + <?php echo $h(implode(' / ', array_diff(array_keys($allowed), [$base])) ?: 'another currency'); ?>)
+                and the cashier can give change in another currency, at the rates on this page. When off, every payment and the change are in the
+                sale currency; paying with several methods (e.g. cash + EcoCash) still works. Web, desktop and mobile tills.</p></div>
+        <div class="ps-card-content" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <span class="ps-badge <?php echo $splitCurrency ? 'ps-badge-success' : 'ps-badge-warning'; ?>"><?php echo $splitCurrency ? 'On' : 'Off'; ?></span>
+            <?php if ($mayToggleSplit): ?>
+            <form method="post" action="exchange_rates.php" style="margin:0">
+                <?php echo psCsrfField(); ?>
+                <input type="hidden" name="split_currency" value="<?php echo $splitCurrency ? '0' : '1'; ?>">
+                <button type="submit" class="ps-btn <?php echo $splitCurrency ? 'ps-btn-outline' : 'ps-btn-default'; ?>"><?php echo $splitCurrency ? 'Turn off' : 'Turn on'; ?></button>
+            </form>
+            <?php else: ?>
+            <span class="ps-muted">Only an admin can change this.</span>
+            <?php endif; ?>
+        </div>
+    </div>
+
     <div class="ps-card">
         <div class="ps-card-header"><h2 class="ps-card-title">Add a rate</h2>
             <p class="ps-card-desc">To change a rate, add the new one with its start time; the old one stays in history. Rates cannot be edited or deleted.</p></div>

@@ -89,6 +89,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn) {
                 'target_id' => (string)$look['user']['email'],
             ]);
             $level = strtolower(trim((string)($look['user']['level'] ?? '')));
+            // 2026-11-06: password was reset to the default by a Super Admin: choose a new one before anything else.
+            if (psSecurityMustChangePassword($conn, (int)$look['user']['id'])) {
+                $_SESSION['ps_must_change_pw'] = 1;
+                header('Location: change_password.php');
+                $conn->close();
+                exit;
+            }
             if (psPlatformIsSuperAdminLevel($level)) {
                 header('Location: platform.php');
             } elseif ($level === 'admin') {

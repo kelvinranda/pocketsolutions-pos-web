@@ -542,6 +542,7 @@ if (!function_exists('psPlatformIsSuperAdminLevel')) {
             'MANAGED_OFF' => 'Administration by ' . PS_PLATFORM_PROVIDER_NAME . ' turned off',
             'ADMIN_CREATE' => 'Company admin created',
             'ADMIN_PASSWORD_RESET' => 'Company admin password reset',
+            'USER_PASSWORD_DEFAULT' => 'User password reset to the default',
             'USER_ROLE_CHANGE' => 'User role changed',
             'SUPERADMIN_CREATE' => 'Super Admin created',
             'SUPERADMIN_LOCK' => 'Super Admin locked',

@@ -31,6 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (strlen($new) < PS_PASSWORD_MIN_LENGTH) {
         $error = 'New password must be at least ' . PS_PASSWORD_MIN_LENGTH . ' characters.';
+    } elseif ($new === PS_DEFAULT_RESET_PASSWORD) {
+        $error = 'Choose a password other than the default one you were given.';
     } elseif ($new !== $confirm) {
         $error = 'New password confirmation does not match.';
     } else {
@@ -49,6 +51,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif (!psSecurityUpgradePasswordHash($conn, (int)$look['user']['id'], $new)) {
                 $error = 'Password could not be updated.';
             } else {
+                // 2026-11-06: the default password from a reset is replaced: the user can use the POS again.
+                psSecuritySetMustChangePassword($conn, (int)$look['user']['id'], false);
+                unset($_SESSION['ps_must_change_pw']);
                 session_regenerate_id(true);
                 psCsrfRotate();
                 psSecurityAudit($conn, 'PASSWORD_CHANGE', [
@@ -76,6 +81,9 @@ $conn->close();
 <?php ps_open('Change Password'); ?>
 <div class="ps-narrow">
     <h1>Change Password</h1>
+    <?php if (!empty($_SESSION['ps_must_change_pw'])): ?>
+    <div class="ps-alert ps-alert-warning" role="alert">Your password was reset to the default. Choose your own password to continue: enter the default one you were given as the current password.</div>
+    <?php endif; ?>
     <p class="ps-page-lead">Update the password for <?php echo htmlspecialchars($email !== '' ? $email : 'your account', ENT_QUOTES, 'UTF-8'); ?>. You will stay signed in after a successful change.</p>
 
     <?php if ($message !== ''): ?>

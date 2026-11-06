@@ -489,6 +489,10 @@ function psDtCatalogue(mysqli $conn, array $till): array
         })(),
         // 2026-10-18: Till users may add new customers at the till (company switch on the Customers page).
         'till_add_customers' => psTillMayAddCustomers($conn, (string)$till['company_name']),
+        // 2026-11-06: split currency (company switch on the Exchange Rates page): payments / change in another currency.
+        'split_currency' => psCompanySplitCurrency($conn, (string)$till['company_name']),
+        // 2026-11-06: split payment (company switch on the Exchange Rates page): "Add another payment" at the till.
+        'split_payment' => psCompanySplitPayment($conn, (string)$till['company_name']),
         'picking_slip' => (function () use ($conn, $till) {
             require_once __DIR__ . '/picking_slip.php';
             return psPickingSlipEnabled($conn, (string)$till['company_name']);

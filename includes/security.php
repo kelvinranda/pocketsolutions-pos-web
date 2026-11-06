@@ -1012,3 +1012,55 @@ function psSecurityLoginThrottle(mysqli $conn, string $email): array
     }
     return ['blocked' => false];
 }
+
+// ---------------------------------------------------------------- 2026-11-06 default password reset
+// A Super Admin can reset any company user's password to the default (000000). The account is then flagged so the
+// user must choose their own password at the next web sign-in (session_check sends them to change_password.php).
+if (!defined('PS_DEFAULT_RESET_PASSWORD')) {
+    define('PS_DEFAULT_RESET_PASSWORD', '000000');
+}
+
+function psSecurityEnsureMustChangeColumn(mysqli $conn): bool
+{
+    static $ok = null;
+    if ($ok !== null) {
+        return $ok;
+    }
+    $res = mysqli_query($conn, "SHOW COLUMNS FROM users LIKE 'must_change_password'");
+    if ($res && mysqli_num_rows($res) > 0) {
+        return $ok = true;
+    }
+    return $ok = (bool)mysqli_query($conn, 'ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0');
+}
+
+function psSecurityMustChangePassword(mysqli $conn, int $userId): bool
+{
+    if ($userId < 1 || !psSecurityEnsureMustChangeColumn($conn)) {
+        return false;
+    }
+    $st = mysqli_prepare($conn, 'SELECT must_change_password FROM users WHERE id = ? LIMIT 1');
+    if (!$st) {
+        return false;
+    }
+    mysqli_stmt_bind_param($st, 'i', $userId);
+    mysqli_stmt_execute($st);
+    $row = mysqli_fetch_assoc(mysqli_stmt_get_result($st)) ?: [];
+    mysqli_stmt_close($st);
+    return (int)($row['must_change_password'] ?? 0) === 1;
+}
+
+function psSecuritySetMustChangePassword(mysqli $conn, int $userId, bool $on): bool
+{
+    if ($userId < 1 || !psSecurityEnsureMustChangeColumn($conn)) {
+        return false;
+    }
+    $st = mysqli_prepare($conn, 'UPDATE users SET must_change_password = ? WHERE id = ? LIMIT 1');
+    if (!$st) {
+        return false;
+    }
+    $flag = $on ? 1 : 0;
+    mysqli_stmt_bind_param($st, 'ii', $flag, $userId);
+    $ok = mysqli_stmt_execute($st);
+    mysqli_stmt_close($st);
+    return $ok;
+}

@@ -1293,3 +1293,66 @@ html[data-theme] body.ps-pos .ps-select-check svg {
 }
 html[data-theme] body.ps-pos .pay-sheet .ps-select { display: flex; width: 100%; min-width: 0; }
 html[data-theme] body.ps-pos .split-grid .ps-select { min-width: 0; }
+
+/* ---------- 2026-11-05: held (parked) sales on the till ---------- */
+html[data-theme] body.ps-pos .order-hold {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+html[data-theme] body.ps-pos .order-hold[hidden],
+html[data-theme] body.ps-pos .order-hold .btn[hidden] { display: none !important; }
+html[data-theme] body.ps-pos .order-hold .btn:only-child,
+html[data-theme] body.ps-pos .order-hold .btn[hidden] + .btn,
+html[data-theme] body.ps-pos .order-hold .btn:has(+ .btn[hidden]) { grid-column: 1 / -1; }
+html[data-theme] body.ps-pos .order-hold .btn {
+  min-height: 40px;
+  margin-top: 0;
+  padding: 4px 8px;
+  border-radius: var(--ps-radius-control);
+  font-size: 14px;
+  font-weight: 600;
+}
+html[data-theme] body.ps-pos #heldSalesBtn {
+  color: var(--ps-text);
+  border-color: color-mix(in oklab, var(--ps-yellow) 55%, var(--ps-line));
+}
+html[data-theme] body.ps-pos .held-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+}
+html[data-theme] body.ps-pos .held-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--ps-line);
+  border-radius: var(--ps-radius-control);
+  background: var(--ps-card);
+}
+html[data-theme] body.ps-pos .held-row .hint { margin: 2px 0 0; }
+html[data-theme] body.ps-pos .held-title {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-theme] body.ps-pos .held-row .btn {
+  width: auto;
+  min-height: 38px;
+  margin-top: 0;
+  padding: 4px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+html[data-theme] body.ps-pos .held-row .held-resume {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  border: 0;
+}
+html[data-theme] body.ps-pos .held-row .held-resume:hover:not(:disabled) { background: var(--ps-yellow-hi); }

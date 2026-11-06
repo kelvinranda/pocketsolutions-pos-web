@@ -371,6 +371,29 @@ function psSaleRefundReconFinding(
 /**
  * Money helpers (2dp).
  */
+/**
+ * 2026-11-06: a refund amount in the sale currency as cash in another currency, at the rate on the sale date (the same
+ * conversion psSaleRefundProcess uses when it pays the cash out). Null when there is no rate.
+ */
+function psSaleRefundReconCashInCurrency(mysqli $conn, string $invoice, string $amount, string $saleCur, string $cashCur, int $tillSessionId): ?string
+{
+    require_once __DIR__ . '/currency.php';
+    $st = mysqli_prepare($conn, "SELECT COALESCE(sold_at, CONCAT(date_, ' 12:00:00')) AS at FROM online_sales_ref WHERE invoice_number = ? LIMIT 1");
+    $soldAt = '';
+    if ($st) {
+        mysqli_stmt_bind_param($st, 's', $invoice);
+        mysqli_stmt_execute($st);
+        $row = mysqli_fetch_assoc(mysqli_stmt_get_result($st)) ?: [];
+        mysqli_stmt_close($st);
+        $soldAt = (string)($row['at'] ?? '');
+    }
+    $conv = psFxRate($conn, psFxTillCompany($conn, $tillSessionId), $saleCur, $cashCur, $soldAt !== '' ? $soldAt : date('Y-m-d H:i:s'));
+    if (empty($conv['ok'])) {
+        return null;
+    }
+    return psSaleRefundReconMoney(psFxCentsToMoney(psFxConvertCents((int)psFxMoneyToCents($amount), $conv['frac'], psFxDecimals($conn, $cashCur))));
+}
+
 function psSaleRefundReconMoney($raw): string
 {
     return number_format((float)$raw, 2, '.', '');
@@ -752,7 +775,7 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
     $cashByRef = [];
     if ($refundNumbers) {
         $in = psSaleRefundReconInList($conn, $refundNumbers, false);
-        $sql = "SELECT id, till_session_id, branch, amount, reference_type, reference_id, movement_type, movement_at
+        $sql = "SELECT id, till_session_id, branch, amount, currency, reference_type, reference_id, movement_type, movement_at
                 FROM cash_movements
                 WHERE movement_type = 'CASH_REFUND'
                   AND (
@@ -1151,6 +1174,21 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
             );
         }
 
+        // 2026-11-06: a cash refund the cashier gave in another currency (split currency) is posted in that currency, so
+        // it is checked against the refund converted the same way as when it was paid out (psSaleRefundProcess).
+        $cashExpectAmt = $procAmt;
+        if ($isCash && $cashCount === 1) {
+            $refundCur = strtoupper(trim((string)($req['refund_currency'] ?? '')));
+            $cashCur = strtoupper(trim((string)($cashRows[0]['currency'] ?? '')));
+            $saleCur = strtoupper(trim((string)($req['currency'] ?? '')));
+            if ($refundCur !== '' && $saleCur !== '' && $refundCur !== $saleCur && $cashCur === $refundCur) {
+                $expectCash = psSaleRefundReconCashInCurrency($conn, $inv, $procAmt, $saleCur, $refundCur, (int)$cashRows[0]['till_session_id']);
+                if ($expectCash !== null) {
+                    $cashExpectAmt = $expectCash;
+                }
+            }
+        }
+
         if ($isCash) {
             if ($cashCount === 0) {
                 $findings[] = psSaleRefundReconFinding(
@@ -1162,9 +1200,9 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
                         'refund_number' => $refNum,
                         'invoice_number' => $inv,
                         'branch' => $reqBranch,
-                        'amount_expected' => $procAmt,
+                        'amount_expected' => $cashExpectAmt,
                         'amount_actual' => '0.00',
-                        'amount_diff' => psSaleRefundReconMoneyDiff($procAmt, '0.00'),
+                        'amount_diff' => psSaleRefundReconMoneyDiff($cashExpectAmt, '0.00'),
                         'payment_method' => $method,
                         'processed_at' => $procAt,
                         'evidence' => 'reference_type=REFUND reference_id=' . $refNum,
@@ -1180,15 +1218,15 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
                         'refund_number' => $refNum,
                         'invoice_number' => $inv,
                         'branch' => $reqBranch,
-                        'amount_expected' => $procAmt,
+                        'amount_expected' => $cashExpectAmt,
                         'amount_actual' => $cashSum,
-                        'amount_diff' => psSaleRefundReconMoneyDiff($procAmt, $cashSum),
+                        'amount_diff' => psSaleRefundReconMoneyDiff($cashExpectAmt, $cashSum),
                         'payment_method' => $method,
                         'processed_at' => $procAt,
                         'evidence' => 'cash_rows=' . $cashCount,
                     ]
                 );
-            } elseif ($cashSum !== $procAmt) {
+            } elseif ($cashSum !== $cashExpectAmt) {
                 $findings[] = psSaleRefundReconFinding(
                     PS_REFUND_RECON_CAT_CASH,
                     'CASH_AMOUNT_MISMATCH',
@@ -1198,9 +1236,9 @@ function psSaleRefundReconciliationRun(mysqli $conn, array $rawFilters = []): ar
                         'refund_number' => $refNum,
                         'invoice_number' => $inv,
                         'branch' => $reqBranch,
-                        'amount_expected' => $procAmt,
+                        'amount_expected' => $cashExpectAmt,
                         'amount_actual' => $cashSum,
-                        'amount_diff' => psSaleRefundReconMoneyDiff($procAmt, $cashSum),
+                        'amount_diff' => psSaleRefundReconMoneyDiff($cashExpectAmt, $cashSum),
                         'payment_method' => $method,
                         'processed_at' => $procAt,
                         'evidence' => 'cash_movement_id=' . (int)$cashRows[0]['id'],

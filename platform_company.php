@@ -127,6 +127,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $errors[] = $r['error'];
         }
+    } elseif ($action === 'reset_default') {
+        // 2026-11-06: Super Admin resets any of this company's users to the default password (000000). The user must
+        // choose their own password at the next web sign-in. Reason required; logged here and in the security audit.
+        $uid = (int)($_POST['user_id'] ?? 0);
+        $reason = trim((string)($_POST['reason'] ?? ''));
+        $target = null;
+        foreach (psUserRoleCompanyUsers($conn, $key) as $u) {
+            if ((int)$u['id'] === $uid) {
+                $target = $u;
+            }
+        }
+        if (!$target) {
+            $errors[] = 'Choose one of this company\'s users.';
+        } elseif (mb_strlen($reason) < 3) {
+            $errors[] = 'Give a reason for the reset (e.g. "Cashier forgot password, called 6 Nov").';
+        } else {
+            $r = psPlatformSetPassword($conn, $uid, PS_DEFAULT_RESET_PASSWORD);
+            if (!empty($r['ok'])) {
+                psSecuritySetMustChangePassword($conn, $uid, true);
+                psPlatformAudit($conn, 'USER_PASSWORD_DEFAULT', $key, $reason, ['login' => $target['email']]);
+                psSecurityAudit($conn, 'PASSWORD_RESET', [
+                    'summary' => 'Password reset to the default by ' . PS_PLATFORM_PROVIDER_NAME . ' (' . $key . ')',
+                    'target_type' => 'user',
+                    'target_id' => (string)$uid,
+                ]);
+                psPlatformFlash('ok', 'Password for ' . $target['email'] . ' reset to ' . PS_DEFAULT_RESET_PASSWORD
+                    . ' and the account unlocked. They must choose a new password when they next sign in on the web.');
+                header('Location: ' . $self);
+                exit;
+            }
+            $errors[] = $r['error'];
+        }
     } elseif ($action === 'change_role') {
         // 2026-10-28: Super Admin changes a company user's role (reason required; logged here and in the company's audit).
         $r = psUserRoleChange($conn, $key, (int)($_POST['user_id'] ?? 0), (string)($_POST['level'] ?? ''), [
@@ -292,6 +324,26 @@ $minLen = PS_PASSWORD_MIN_LENGTH;
                 </div>
             </div>
             <?php endif; ?>
+
+            <details class="ps-card" <?php echo ($_POST['action'] ?? '') === 'reset_default' ? 'open' : ''; ?>>
+                <summary class="ps-card-header"><h2 class="ps-card-title">Reset a user's password to <?php echo $h(PS_DEFAULT_RESET_PASSWORD); ?></h2></summary>
+                <div class="ps-card-content">
+                    <p class="pf-help">For any user of this company (cashier, supervisor, manager or admin) who cannot sign in. The account is unlocked,
+                        and the user must choose their own password the next time they sign in on the web. The reason is kept in this company's activity log.</p>
+                    <form method="post" action="<?php echo $h($self); ?>" class="pf-form" autocomplete="off"
+                          onsubmit="return confirm('Reset this user\'s password to <?php echo $h(PS_DEFAULT_RESET_PASSWORD); ?>?');">
+                        <?php echo psCsrfField(); ?>
+                        <input type="hidden" name="action" value="reset_default"><input type="hidden" name="id" value="<?php echo $id; ?>">
+                        <div class="pf-grid">
+                            <label class="ps-field pf-span"><span class="ps-label">User</span>
+                                <select class="ps-input" name="user_id" required><option value="">Choose a user…</option>
+                                <?php foreach ($roleUsers as $u): ?><option value="<?php echo (int)$u['id']; ?>"><?php echo $h(trim($u['firstname'] . ' ' . $u['lastname']) . ' · ' . $u['email'] . ' · ' . psUserRoleLabel((string)$u['level'])); ?></option><?php endforeach; ?></select></label>
+                            <label class="ps-field pf-span"><span class="ps-label">Reason</span><input class="ps-input" name="reason" required minlength="3" maxlength="400" placeholder="e.g. Cashier forgot password, called 6 Nov"></label>
+                        </div>
+                        <div class="pf-actions"><button class="ps-btn ps-btn-default" type="submit">Reset to <?php echo $h(PS_DEFAULT_RESET_PASSWORD); ?></button></div>
+                    </form>
+                </div>
+            </details>
 
             <details class="ps-card" <?php echo ($_POST['action'] ?? '') === 'change_role' ? 'open' : ''; ?>>
                 <summary class="ps-card-header"><h2 class="ps-card-title">Change a user's role</h2></summary>

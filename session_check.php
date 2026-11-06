@@ -30,3 +30,16 @@ psSecurityEnforceWebSession($psSecConn instanceof mysqli ? $psSecConn : null, [
 if ($psSecConn instanceof mysqli) {
     mysqli_close($psSecConn);
 }
+
+// 2026-11-06: after a Super Admin reset the password to the default (000000), the user must choose a new one first.
+if (!empty($_SESSION['ps_must_change_pw'])
+    && !in_array(basename((string)($_SERVER['SCRIPT_NAME'] ?? '')), ['change_password.php', 'logout.php'], true)) {
+    if (strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest') {
+        http_response_code(403);
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'error' => 'Choose a new password first (Change password).']);
+    } else {
+        header('Location: change_password.php');
+    }
+    exit;
+}

@@ -157,6 +157,112 @@ function psTillSetMayAddCustomers(mysqli $conn, bool $on, string $actor): array
 }
 
 /**
+ * 2026-11-06 — Company switch: split currency. On (the default), a sale may be paid partly in another currency the company
+ * sells in (e.g. USD + ZiG) and the change given in another currency. Off: every payment and the change are in the sale
+ * currency (several payment methods in that currency are still allowed). Web, desktop and mobile tills.
+ */
+function psCompanySplitCurrency(mysqli $conn, ?string $company = null): bool
+{
+    $company = trim((string)($company ?? psCashControlsCompany()));
+    if ($company === '' || !psCashControlsEnsureSchema($conn)) {
+        return true;
+    }
+    $stmt = mysqli_prepare($conn, "SELECT setting_value FROM cash_control_settings WHERE company_name = ? AND setting_key = 'split_currency' LIMIT 1");
+    if (!$stmt) {
+        return true;
+    }
+    mysqli_stmt_bind_param($stmt, 's', $company);
+    mysqli_stmt_execute($stmt);
+    $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+    mysqli_stmt_close($stmt);
+    return $row === null || (string)$row['setting_value'] !== '0';
+}
+
+/** Admin only. */
+function psSetCompanySplitCurrency(mysqli $conn, bool $on, string $actor): array
+{
+    if (psCashControlsLevel() !== 'admin') {
+        return ['ok' => false, 'error' => 'Only an administrator may change this.'];
+    }
+    $company = psCashControlsCompany();
+    if ($company === '' || !psCashControlsEnsureSchema($conn)) {
+        return ['ok' => false, 'error' => 'The setting could not be saved.'];
+    }
+    $v = $on ? '1' : '0';
+    $now = date('Y-m-d H:i:s');
+    $stmt = mysqli_prepare($conn, "INSERT INTO cash_control_settings (company_name, setting_key, setting_value, updated_by, updated_at)
+        VALUES (?, 'split_currency', ?, ?, ?)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)");
+    if (!$stmt) {
+        return ['ok' => false, 'error' => 'The setting could not be saved.'];
+    }
+    mysqli_stmt_bind_param($stmt, 'ssss', $company, $v, $actor, $now);
+    $ok = mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+    return $ok ? ['ok' => true] : ['ok' => false, 'error' => 'The setting could not be saved.'];
+}
+
+/**
+ * 2026-11-06 — Company switch: split payment. On (the default), the tills show "Add another payment" so one sale can be
+ * paid several ways (e.g. cash + EcoCash). Off: one payment per sale, as before. Web, desktop and mobile tills.
+ */
+function psCompanySplitPayment(mysqli $conn, ?string $company = null): bool
+{
+    $company = trim((string)($company ?? psCashControlsCompany()));
+    if ($company === '' || !psCashControlsEnsureSchema($conn)) {
+        return true;
+    }
+    $stmt = mysqli_prepare($conn, "SELECT setting_value FROM cash_control_settings WHERE company_name = ? AND setting_key = 'split_payment' LIMIT 1");
+    if (!$stmt) {
+        return true;
+    }
+    mysqli_stmt_bind_param($stmt, 's', $company);
+    mysqli_stmt_execute($stmt);
+    $row = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
+    mysqli_stmt_close($stmt);
+    return $row === null || (string)$row['setting_value'] !== '0';
+}
+
+/** Admin only. */
+function psSetCompanySplitPayment(mysqli $conn, bool $on, string $actor): array
+{
+    if (psCashControlsLevel() !== 'admin') {
+        return ['ok' => false, 'error' => 'Only an administrator may change this.'];
+    }
+    $company = psCashControlsCompany();
+    if ($company === '' || !psCashControlsEnsureSchema($conn)) {
+        return ['ok' => false, 'error' => 'The setting could not be saved.'];
+    }
+    $v = $on ? '1' : '0';
+    $now = date('Y-m-d H:i:s');
+    $stmt = mysqli_prepare($conn, "INSERT INTO cash_control_settings (company_name, setting_key, setting_value, updated_by, updated_at)
+        VALUES (?, 'split_payment', ?, ?, ?)
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = VALUES(updated_at)");
+    if (!$stmt) {
+        return ['ok' => false, 'error' => 'The setting could not be saved.'];
+    }
+    mysqli_stmt_bind_param($stmt, 'ssss', $company, $v, $actor, $now);
+    $ok = mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+    return $ok ? ['ok' => true] : ['ok' => false, 'error' => 'The setting could not be saved.'];
+}
+
+/** Error text when a checked payment list uses another currency while the company has split currency off; '' = fine. */
+function psSplitCurrencyViolation(array $tenderEval, string $saleCurrency): string
+{
+    foreach ((array)($tenderEval['tenders'] ?? []) as $t) {
+        if (strtoupper((string)($t['currency'] ?? $saleCurrency)) !== strtoupper($saleCurrency)) {
+            return 'Paying in another currency is turned off for this company. Take every payment in ' . $saleCurrency . '.';
+        }
+    }
+    $chg = $tenderEval['change'] ?? null;
+    if (is_array($chg) && (int)($chg['amount_cents'] ?? 0) > 0 && strtoupper((string)($chg['currency'] ?? $saleCurrency)) !== strtoupper($saleCurrency)) {
+        return 'Change in another currency is turned off for this company. Give the change in ' . $saleCurrency . '.';
+    }
+    return '';
+}
+
+/**
  * 2026-10-18 — Company switch: may the POS sell more than is in stock (stock goes below zero)?
  * Admins set it on Opening Stock. A company that never chose follows the server default
  * ('allow_negative_stock' in the private pockets_config.php, on unless set to 0).

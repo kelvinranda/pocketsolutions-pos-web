@@ -88,6 +88,8 @@ if ($posConn) {
     require_once __DIR__ . '/includes/cash_controls.php';
     $mayAddCustomer = psSessionMayAddCustomer($posConn);
     $posAllowNegative = psCompanyAllowsNegativeStock($posConn); // 2026-10-18: company switch (Opening Stock page)
+    $posSplitCurrency = psCompanySplitCurrency($posConn); // 2026-11-06: company switch (Exchange Rates page)
+    $posSplitPayment = psCompanySplitPayment($posConn); // 2026-11-06: company switch (Exchange Rates page)
     // 2026-10-20: currencies this company sells in, with the rate in force now (the sale re-checks it).
     require_once __DIR__ . '/includes/currency.php';
     if (psFxEnsureSchema($posConn)) {
@@ -372,6 +374,11 @@ $mayRefund = trim((string)($_SESSION['logger'] ?? '')) !== '';
                     <button class="btn btn-blue" type="button" data-pay onclick="openPaymentScreen()">Print / Submit</button>
                     <button class="btn btn-gray" type="button" id="discardCartBtn" onclick="openDiscardCart()">Clear cart</button>
                 </div>
+                <!-- 2026-11-05: hold (park) a sale and resume it later; kept in this browser per cashier -->
+                <div class="order-hold">
+                    <button class="btn btn-gray" type="button" id="holdSaleBtn" data-pay onclick="holdCurrentSale()" hidden>Hold sale</button>
+                    <button class="btn btn-gray" type="button" id="heldSalesBtn" onclick="openHeldSales()" hidden>Held · 0</button>
+                </div>
                 <p class="pay-error" id="orderNotice" role="alert" hidden></p>
             </div>
         </aside>
@@ -448,6 +455,14 @@ $mayRefund = trim((string)($_SESSION['logger'] ?? '')) !== '';
             <p class="pay-error" id="discardError" role="alert" hidden></p>
             <button class="btn btn-yellow" type="button" id="discardConfirm" onclick="confirmDiscardCart()">Confirm clear cart</button>
             <button class="btn btn-gray" type="button" onclick="closeDiscardCart()">Back</button>
+        </div>
+    </div>
+    <div class="modal modal-dialog" id="heldSheet" onclick="if(event.target===this)closeHeldSales()">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="heldTitle">
+            <h3 id="heldTitle">Held sales</h3>
+            <p class="hint" id="heldHint"></p>
+            <div id="heldList" class="held-list"></div>
+            <button class="btn btn-gray" type="button" onclick="closeHeldSales()">Close</button>
         </div>
     </div>
     <div class="modal modal-dialog" id="variantSheet" onclick="if(event.target===this)closeVariants()">
@@ -1539,7 +1554,12 @@ function formatMoney(cents) {
 let extraTenders = [];
 const TENDER_METHODS = <?php echo json_encode(array_diff_key(psPaymentMethods(), ['CREDIT' => 1]), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
 function isSplit() { return extraTenders.length > 0; }
+// 2026-11-06: split currency is a company setting (Exchange Rates page). Off: payments and change only in the sale currency.
+const POS_SPLIT_CURRENCY = <?php echo ($posSplitCurrency ?? true) ? 'true' : 'false'; ?>;
+// 2026-11-06: split payment ("Add another payment") is a company setting too; off = one payment per sale.
+const POS_SPLIT_PAYMENT = <?php echo ($posSplitPayment ?? true) ? 'true' : 'false'; ?>;
 function sellableCodes() {
+    if (!POS_SPLIT_CURRENCY) return [posCur];
     return Object.keys(POS_FX.currencies).filter(function (k) { return k === POS_FX.base || POS_FX.currencies[k].ok; });
 }
 /** cents in `from` -> cents in `to` (1 BASE = num/den CODE; base has 1/1). null when a rate is missing. */
@@ -1580,7 +1600,7 @@ function splitFigures() {
     return { total: total, paid: paid, nonCash: nonCash, due: Math.max(0, total - paid), change: Math.max(0, paid - total), problem: problem };
 }
 function addTender() {
-    if (saleBusy) return;
+    if (saleBusy || !POS_SPLIT_PAYMENT) return;
     const f = splitFigures();
     const codes = sellableCodes();
     const other = codes.find(function (k) { return k !== posCur; });
@@ -1921,7 +1941,7 @@ function syncPayForm() {
     renderCreditAccountPanel(method);
     // 2026-11-05 split payment: quick-cash notes only for a single payment; "Still due" and the change currency.
     renderQuickCash(totalCents, isSplit() ? '' : method);
-    document.getElementById('addTenderBtn').hidden = method === 'CREDIT' || extraTenders.length >= 7;
+    document.getElementById('addTenderBtn').hidden = !POS_SPLIT_PAYMENT || method === 'CREDIT' || extraTenders.length >= 7;
     const paidRaw = (document.getElementById('amountPaid').value || '').trim();
     const paid = moneyCents(paidRaw);
     let changeSale = (method === 'CREDIT') ? 0
@@ -2066,6 +2086,7 @@ function renderCart() {
     document.getElementById('subtotalAmount').innerText = money;
     document.getElementById('totalAmount').innerText = money;
     updateCustomerBadge();
+    syncHeldUi();
     if (document.getElementById('paySheet').classList.contains('show')) syncPayForm();
 }
 function isCashCustomerSearchValue(q) {
@@ -2596,6 +2617,129 @@ function confirmDiscardCart() {
             }
         }
     });
+}
+// ---------------------------------------------------------------- 2026-11-05 held (parked) sales
+// Put a customer's cart aside, serve the next customer, bring it back later. Kept in this browser for this company and
+// cashier (it survives a reload), never sent to the server: nothing is sold, and no stock moves, until the held cart is
+// resumed and finished like any other sale. Prices are worked out again from the base price when it is resumed.
+const HELD_MAX = 20;
+const HELD_KEY = 'ps_pos_held_v1:' + <?php echo json_encode(strtolower(trim((string)($_SESSION['the_company'] ?? '')))); ?> + ':' + String(posCashier || '').trim().toLowerCase();
+function listHeldSales() {
+    try {
+        const list = JSON.parse(localStorage.getItem(HELD_KEY) || '[]');
+        return Array.isArray(list) ? list : [];
+    } catch (e) { return []; }
+}
+function saveHeldSales(list) {
+    try { localStorage.setItem(HELD_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+}
+function syncHeldUi() {
+    const holdBtn = document.getElementById('holdSaleBtn');
+    const heldBtn = document.getElementById('heldSalesBtn');
+    if (!holdBtn || !heldBtn) return;
+    const n = listHeldSales().length;
+    holdBtn.hidden = cartLines().length === 0;
+    heldBtn.hidden = n === 0;
+    heldBtn.textContent = 'Held · ' + n;
+    const wrap = holdBtn.parentElement;
+    if (wrap) wrap.hidden = holdBtn.hidden && heldBtn.hidden;
+}
+/** Holds the cart; returns false (with a message) when it cannot. */
+function holdCurrentSale() {
+    const lines = cartLines();
+    if (!lines.length) return false;
+    if (saleBusy) return false;
+    if (posQuote) {
+        showOrderNotice('This cart is quotation ' + posQuote.number + '. Finish it or remove the quote before holding it.');
+        return false;
+    }
+    const list = listHeldSales();
+    if (list.length >= HELD_MAX) {
+        showOrderNotice('Up to ' + HELD_MAX + ' sales can be held. Resume or remove one first.');
+        return false;
+    }
+    const entry = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        customer: selectedCustomer && selectedCustomer.id ? { id: selectedCustomer.id, code: selectedCustomer.code || '', name: selectedCustomer.name || '' } : null,
+        currency: posCur,
+        total: formatMoney(cartTotalCents()),
+        lines: JSON.parse(JSON.stringify(lines)),
+        held_at: new Date().toISOString()
+    };
+    if (!saveHeldSales([entry].concat(list))) {
+        showOrderNotice('This browser would not keep the held sale. Nothing was changed.');
+        return false;
+    }
+    cart = [];
+    resetTicket();
+    clearPosCustomer();
+    renderCart();
+    renderGrid();
+    showOrderNotice('Sale held (' + entry.total + '). Find it under Held.');
+    focusProductSearch();
+    return true;
+}
+function takeHeldSale(id) {
+    const list = listHeldSales();
+    const found = list.find(function (h) { return h.id === id; }) || null;
+    if (found) saveHeldSales(list.filter(function (h) { return h.id !== id; }));
+    return found;
+}
+function openHeldSales() {
+    renderHeldSales();
+    document.getElementById('heldSheet').classList.add('show');
+}
+function closeHeldSales() {
+    document.getElementById('heldSheet').classList.remove('show');
+}
+function renderHeldSales() {
+    const list = listHeldSales();
+    document.getElementById('heldHint').textContent = cartLines().length
+        ? 'The sale on the till now is held first when you resume another, so nothing is lost.'
+        : 'Resume a sale to finish it, or remove it.';
+    document.getElementById('heldList').innerHTML = list.length ? list.map(function (h) {
+        const items = (h.lines || []).reduce(function (s, l) { return s + (l.measure ? 1 : Number(l.quantity) || 0); }, 0);
+        const when = new Date(h.held_at);
+        const time = isNaN(when) ? '' : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const who = h.customer && h.customer.name ? h.customer.name : CASH_CUSTOMER_LABEL;
+        return '<div class="held-row">'
+            + '<div class="held-main"><div class="held-title">' + escapeHtml(who) + ' · ' + escapeHtml(h.total || '') + '</div>'
+            + '<div class="hint">' + items + ' item' + (items === 1 ? '' : 's') + ' · ' + escapeHtml(h.currency || '') + (time ? ' · held ' + escapeHtml(time) : '') + '</div></div>'
+            + '<button class="btn btn-yellow held-resume" type="button" onclick="resumeHeldSale(' + escapeHtml(JSON.stringify(h.id)) + ')">Resume</button>'
+            + '<button class="btn btn-gray held-remove" type="button" onclick="removeHeldSale(' + escapeHtml(JSON.stringify(h.id)) + ')" aria-label="Remove held sale for ' + escapeHtml(who) + '">Remove</button>'
+            + '</div>';
+    }).join('') : '<p class="hint">No held sales.</p>';
+}
+function resumeHeldSale(id) {
+    if (saleBusy) return;
+    // A sale in progress is held first, so nothing is lost.
+    if (cartLines().length && !holdCurrentSale()) { closeHeldSales(); return; }
+    const h = takeHeldSale(id);
+    closeHeldSales();
+    if (!h) { syncHeldUi(); return; }
+    // Back in its own currency when it can still be sold in it; otherwise in the till's currency. Either way prices are
+    // worked out again from the base price at today's rate (the server checks them again at the sale).
+    const c = POS_FX.currencies[h.currency];
+    if (c && c.ok && h.currency !== posCur) {
+        posCur = h.currency;
+        try { localStorage.setItem('ps_pos_currency', posCur); } catch (e) {}
+        syncCurrencyUi();
+    }
+    cart = (h.lines || []).map(function (l) { return Object.assign({}, l); });
+    repriceCart();
+    resetTicket();
+    if (h.customer && h.customer.id) selectPosCustomer(h.customer.id, h.customer.code, h.customer.name);
+    else clearPosCustomer();
+    renderGrid();
+    renderCart();
+    hideOrderNotice();
+    if (h.currency && h.currency !== posCur) showOrderNotice('This sale was held in ' + h.currency + ', which the till cannot sell in right now. It is priced in ' + posCur + '.');
+}
+function removeHeldSale(id) {
+    takeHeldSale(id);
+    renderHeldSales();
+    syncHeldUi();
+    if (!listHeldSales().length) closeHeldSales();
 }
 syncCurrencyUi();
 loadCatalog();

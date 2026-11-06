@@ -324,6 +324,15 @@ function psCompleteSale(mysqli $conn, array $post): array
     if (empty($tenderEval['ok'])) {
         return psSaleAbort($conn, true, (string)$tenderEval['error']);
     }
+    // 2026-11-06: split currency is a company setting (Exchange Rates page); off = everything in the sale currency.
+    require_once __DIR__ . '/includes/cash_controls.php';
+    if (!psCompanySplitCurrency($conn, $company) && ($splitCurErr = psSplitCurrencyViolation($tenderEval, $saleCurrency)) !== '') {
+        return psSaleAbort($conn, true, $splitCurErr);
+    }
+    // 2026-11-06: split payment is a company setting too; off = one payment per sale.
+    if (count((array)$tenderEval['tenders']) > 1 && !psCompanySplitPayment($conn, $company)) {
+        return psSaleAbort($conn, true, 'Paying one sale several ways is turned off for this company. Take one payment.');
+    }
     $firstTender = $tenderEval['tenders'][0];
     $changeSaleCents = (int)($tenderEval['change']['sale_cents'] ?? 0);
     // The single-payment view the rest of this function (credit, loyalty, receipt) already uses.
