@@ -21,9 +21,12 @@ const PS_ROLES = ['till' => 'Till', 'supervisor' => 'Supervisor', 'management' =
 function psRolePermDefinitions(): array
 {
     return [
-        'sales_view' => ['See sales', 'Everyone\'s receipts, sales reports, dashboards, Z report, profit, cashier sales. Without it, people see only their own receipts.',
-            [0, 0, 0], ['management_dashboard.php', 'sales_reports.php', 'z_report.php', 'cashier_sales.php', 'generate_pdf.php', 'profit_report.php',
+        'sales_view' => ['See sales', 'Everyone\'s receipts, sales reports, dashboards, profit, cashier sales. Without it, people see only their own receipts.',
+            [0, 0, 0], ['management_dashboard.php', 'sales_reports.php', 'cashier_sales.php', 'profit_report.php',
                 'zimra_receipts.php', 'ItemSales.php', 'InvestmentReport.php', 'income_statement.php']],
+        // 2026-11-11: the Z report on its own. Until the admin sets it for a role, it follows that role's "See sales".
+        'z_report' => ['Z Report', 'See the Z report (the day\'s sales by cashier, payment and currency) and print it, on the web and the desktop till.',
+            [0, 0, 0], ['z_report.php', 'cashier_sales.php', 'generate_pdf.php']],
         'items_manage' => ['Add and edit items', 'Create, edit, import and deactivate items; categories, packs, barcode labels, item history.',
             [0, 1, 1], ['items_list.php', 'create_items.php', 'import_items.php', 'product_categories.php', 'product_packs.php', 'barcode_labels.php',
                 'product_history.php', 'product_audit_history.php', 'generate_items_pdf.php']],
@@ -34,6 +37,9 @@ function psRolePermDefinitions(): array
                 'suppliers_list.php', 'create_supplier.php', 'supplier_view.php', 'supplier_audit_history.php', 'supplier_purchasing_history.php',
                 'create_purchase_order.php', 'purchase_orders_list.php', 'purchase_order_view.php', 'purchase_order_audit_history.php',
                 'create_purchase_return.php', 'purchase_returns_list.php', 'purchase_return_view.php', 'purchase_return_audit_history.php']],
+        // 2026-11-11: correct a saved goods receipt (limits set by the admin on the Goods Receipt page).
+        'grv_edit' => ['Edit goods receipts', 'Correct a saved goods receipt: supplier invoice, date, quantities and costs. Stock is adjusted by the difference and every change is kept in the receiving audit.',
+            [0, 0, 1], ['goods_receipt_edit.php', 'goods_receipt_ref.php', 'goods_receipt.php', 'goods_receipt_audit_history.php']],
         'stock_manage' => ['Manage stock', 'Stock take, adjustments, transfers, opening stock and stock reports.',
             [0, 0, 1], ['stock_adjustment.php', 'stock_take_sheet.php', 'stock_list.php', 'stock_movements.php', 'stock_movement.php', 'movement_list.php',
                 'movement_receipt.php', 'opening_stock.php', 'inventory_control.php', 'inventory_reports.php', 'run_stocklist.php']],
@@ -145,12 +151,22 @@ function psRolePermMatrix(?mysqli $conn, string $company): array
                 mysqli_stmt_bind_param($stmt, 's', $company);
                 mysqli_stmt_execute($stmt);
                 $res = mysqli_stmt_get_result($stmt);
+                $zSet = [];
                 while ($r = mysqli_fetch_assoc($res)) {
                     if (isset($m[$r['role']][$r['perm_key']])) {
                         $m[$r['role']][$r['perm_key']] = (int)$r['allowed'] === 1;
+                        if ($r['perm_key'] === 'z_report') {
+                            $zSet[$r['role']] = true;
+                        }
                     }
                 }
                 mysqli_stmt_close($stmt);
+                // 2026-11-11: Z report was part of "See sales"; until the admin saves it for a role, it follows that role's See sales.
+                foreach (array_keys(PS_ROLES) as $role) {
+                    if (empty($zSet[$role])) {
+                        $m[$role]['z_report'] = $m[$role]['sales_view'];
+                    }
+                }
             }
         }
     }

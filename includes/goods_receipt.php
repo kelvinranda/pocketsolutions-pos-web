@@ -26,6 +26,7 @@ const PS_GRV_AUDIT_SOURCE_UI = 'UI';
 const PS_GRV_AUDIT_CREATE_RECEIPT = 'CREATE_RECEIPT';
 const PS_GRV_AUDIT_RECEIVE = 'RECEIVE';
 const PS_GRV_AUDIT_CLOSE_PO = 'CLOSE_PO';
+const PS_GRV_AUDIT_EDIT = 'EDIT'; // 2026-11-11: a saved receipt corrected (includes/goods_receipt_edit.php)
 
 /**
  * @return bool

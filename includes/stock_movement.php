@@ -16,6 +16,7 @@ function stockMovementTypes(): array
         'TRANSFER_OUT' => 'out',
         'PURCHASE_RETURN' => 'out',
         'ADJUSTMENT' => 'either',
+        'GRV_CORRECTION' => 'either', // 2026-11-11: an edited goods receipt (the difference in quantity)
     ];
 }
 
@@ -291,6 +292,7 @@ function psMovementKindLabel(string $movementType, string $referenceType = ''): 
         'TRANSFER_OUT' => 'Transfer Out',
         'PURCHASE_RETURN' => 'Purchase Return',
         'ADJUSTMENT' => 'Adjustment',
+        'GRV_CORRECTION' => 'Goods Receipt Correction',
     ];
     return $labels[$movementType] ?? $movementType;
 }

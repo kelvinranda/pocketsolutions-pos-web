@@ -2,6 +2,8 @@
 if (session_status() !== PHP_SESSION_ACTIVE) { session_start(); }
 require 'pockets_config.php';
 require_once __DIR__ . '/includes/goods_receipt.php';
+require_once __DIR__ . '/includes/security.php';
+require_once __DIR__ . '/includes/goods_receipt_edit.php'; // 2026-11-11: edit a saved receipt + the admin's limits
 
 $conn = mysqli_connect($servername, $username, $password, $dbname);
 if (!$conn) {
@@ -40,6 +42,30 @@ if (!$signedIn) {
 }
 
 require_once __DIR__ . '/includes/currency.php';
+
+// 2026-11-11: editing saved receipts — who may (Role Permissions: Edit goods receipts) and the admin's limits.
+$grvNotice = '';
+if (!empty($_SESSION['ps_grv_notice'])) {
+    $grvNotice = (string)$_SESSION['ps_grv_notice'];
+    unset($_SESSION['ps_grv_notice']);
+}
+$grvSettingsError = '';
+if ($signedIn && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['grv_edit_settings'])) {
+    if (!psCsrfValidate()) {
+        $grvSettingsError = 'Invalid security token. Reload and try again.';
+    } else {
+        $r = psGrvEditSaveSettings($conn, $_POST, (string)($_SESSION['logger'] ?? ''));
+        if (!empty($r['ok'])) {
+            $_SESSION['ps_grv_notice'] = 'Goods receipt editing limits saved.';
+            header('Location: goods_receipt_ref.php');
+            exit;
+        }
+        $grvSettingsError = (string)$r['error'];
+    }
+}
+$mayEditGrv = $signedIn && psGrvEditAllowed($conn);
+$isGrvAdmin = $signedIn && psCashControlsLevel() === 'admin';
+$grvEditSettings = $isGrvAdmin ? psGrvEditSettings($conn) : null;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -56,6 +82,9 @@ require_once __DIR__ . '/includes/currency.php';
 
     <?php if ($error !== ''): ?>
         <div class="error"><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></div>
+    <?php endif; ?>
+    <?php if ($grvNotice !== ''): ?>
+        <div class="ps-alert ps-alert-success" role="status"><?php echo htmlspecialchars($grvNotice, ENT_QUOTES, 'UTF-8'); ?></div>
     <?php endif; ?>
 
     <?php if ($signedIn && $branch !== ''): ?>
@@ -118,6 +147,9 @@ require_once __DIR__ . '/includes/currency.php';
                             <td><?php echo htmlspecialchars((string)($receipt['created_by'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                             <td>
                                 <button type="button" onclick="window.location.href='goods_receipt.php?invoice_number=<?php echo urlencode((string)$receipt['reference1']); ?>'">View lines</button>
+                                <?php if (!empty($receipt['grv_number']) && $mayEditGrv): ?>
+                                    <a class="ps-btn ps-btn-outline ps-btn-sm" href="goods_receipt_edit.php?grv=<?php echo rawurlencode((string)$receipt['grv_number']); ?>">Edit</a>
+                                <?php endif; ?>
                                 <?php if (!empty($receipt['grv_number'])): ?>
                                     <a class="ps-btn ps-btn-outline ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode((string)$receipt['grv_number']); ?>" target="_blank" rel="noopener">GRV PDF</a>
                                     <a class="ps-btn ps-btn-ghost ps-btn-sm" href="grv_print.php?grv=<?php echo rawurlencode((string)$receipt['grv_number']); ?>&amp;format=slip" target="_blank" rel="noopener">Slip</a>
@@ -128,6 +160,33 @@ require_once __DIR__ . '/includes/currency.php';
                 <?php endif; ?>
             </tbody>
         </table>
+
+        <?php if ($isGrvAdmin && $grvEditSettings !== null): ?>
+        <!-- 2026-11-11: admin's limits on editing saved goods receipts -->
+        <div class="ps-card" style="margin-top:20px">
+            <div class="ps-card-header"><h2 class="ps-card-title">Editing goods receipts</h2>
+                <p class="ps-card-desc">Who may edit is set on <a href="role_permissions.php">Role Permissions</a> (Edit goods receipts). Choose when a saved receipt can no longer be changed.</p></div>
+            <div class="ps-card-content">
+                <?php if ($grvSettingsError !== ''): ?>
+                    <div class="ps-alert ps-alert-destructive" role="alert"><?php echo htmlspecialchars($grvSettingsError, ENT_QUOTES, 'UTF-8'); ?></div>
+                <?php endif; ?>
+                <form method="post" action="goods_receipt_ref.php" style="display:grid;gap:10px;max-width:640px">
+                    <?php echo psCsrfField(); ?>
+                    <input type="hidden" name="grv_edit_settings" value="1">
+                    <label><input type="checkbox" name="lock_exported" value="1" <?php echo $grvEditSettings['lock_exported'] ? 'checked' : ''; ?>>
+                        Lock a receipt once it is in an accounting export</label>
+                    <label><input type="checkbox" name="lock_returns" value="1" <?php echo $grvEditSettings['lock_returns'] ? 'checked' : ''; ?>>
+                        Lock a receipt once goods were returned to the supplier against it</label>
+                    <label><input type="checkbox" name="no_negative" value="1" <?php echo $grvEditSettings['no_negative'] ? 'checked' : ''; ?>>
+                        Do not allow an edit that would take stock below zero</label>
+                    <label>Allow edits only within
+                        <input type="number" name="days" min="0" max="3650" step="1" style="width:90px" value="<?php echo (int)$grvEditSettings['days']; ?>">
+                        days of the receipt date (0 = no time limit)</label>
+                    <div><button class="ps-btn ps-btn-default" type="submit">Save limits</button></div>
+                </form>
+            </div>
+        </div>
+        <?php endif; ?>
     <?php endif; ?>
 <?php ps_close(); mysqli_close($conn); ?>
 </body>
