@@ -150,6 +150,28 @@ function psSalesReportingByCashier(mysqli $conn, array $filters, string $saleCla
 }
 
 /**
+ * 2026-11-13: restaurants — sales by Sit in / Take away (sales from before the switch, or with it off: "Not recorded").
+ *
+ * @return array{ok:bool,rows?:list<array>,totals?:array,error?:string}
+ */
+function psSalesReportingByDine(mysqli $conn, array $filters, string $saleClass = 'completed'): array
+{
+    require_once __DIR__ . '/dine_option.php';
+    if (!psDineOptionEnsureSchema($conn)) {
+        return ['ok' => false, 'error' => 'Sit in / Take away sales could not be loaded.'];
+    }
+    $r = psSalesReportingGroupedBy($conn, $filters, $saleClass, "COALESCE(NULLIF(r.dine_option, ''), 'NONE')", 'dine',
+        'Sit in / Take away sales could not be loaded.', true);
+    if (!empty($r['ok'])) {
+        foreach ($r['rows'] as &$row) {
+            $row['dine'] = psDineOptionLabel($row['dine']) ?: 'Not recorded';
+        }
+        unset($row);
+    }
+    return $r;
+}
+
+/**
  * Sales by product_id + branch (never merge identical names across branches).
  * Revenue per currency (lines at their sale's stored rate); quantities are never converted.
  *

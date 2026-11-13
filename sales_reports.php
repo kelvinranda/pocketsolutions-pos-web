@@ -17,7 +17,7 @@ psReportingEnsureTimezone();
 
 $isAdmin = psReportingIsAdmin();
 $report = strtolower(trim((string)($_GET['report'] ?? 'list')));
-$allowed = ['list', 'by_branch', 'by_cashier', 'by_product', 'payments', 'by_currency', 'refunds', 'cancelled', 'invoice'];
+$allowed = ['list', 'by_branch', 'by_cashier', 'by_product', 'payments', 'by_currency', 'by_dine', 'refunds', 'cancelled', 'invoice'];
 if (!in_array($report, $allowed, true)) {
     $report = 'list';
 }
@@ -106,6 +106,8 @@ if (empty($norm['ok'])) {
         $result = psSalesReportingPaymentMethods($conn, $f);
     } elseif ($report === 'by_currency') {
         $result = psSalesReportingByCurrency($conn, $f);
+    } elseif ($report === 'by_dine') {
+        $result = psSalesReportingByDine($conn, $f, $saleClass); // 2026-11-13
     } elseif ($report === 'refunds') {
         $result = psSalesReportingRefundSummary($conn, $f);
     } elseif ($report === 'cancelled') {
@@ -176,9 +178,15 @@ $keepQuery = array_filter([
             'by_product' => 'By product',
             'payments' => 'Payment methods',
             'by_currency' => 'By currency',
+            'by_dine' => 'Sit in / Take away',
             'refunds' => 'Refunds',
             'cancelled' => 'Cancelled',
         ];
+        // 2026-11-13: the Sit in / Take away tab only for companies that use it (or when it is open).
+        require_once __DIR__ . '/includes/dine_option.php';
+        if ($report !== 'by_dine' && !psDineOptionEnabled($conn)) {
+            unset($tabs['by_dine']);
+        }
         foreach ($tabs as $k => $label):
             $cls = $report === $k ? 'on' : '';
             ?>
@@ -297,10 +305,10 @@ $keepQuery = array_filter([
             <p class="hint">No payment is recorded for this invoice (older sale or not paid).</p>
         <?php endif; ?>
     <?php elseif ($result): ?>
-        <?php if ($report === 'by_branch' || $report === 'by_cashier'): ?>
-            <?php $key = $report === 'by_branch' ? 'branch' : 'cashier'; ?>
+        <?php if ($report === 'by_branch' || $report === 'by_cashier' || $report === 'by_dine'): ?>
+            <?php $key = $report === 'by_branch' ? 'branch' : ($report === 'by_dine' ? 'dine' : 'cashier'); ?>
             <table>
-                <thead><tr><th><?php echo $report === 'by_branch' ? 'Branch' : 'Cashier'; ?></th><th>Txns</th><th>Revenue</th><th>ATV<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '' : ' (' . $h($fx['base']) . ')'; ?></th></tr></thead>
+                <thead><tr><th><?php echo $report === 'by_branch' ? 'Branch' : ($report === 'by_dine' ? 'Sit in / Take away' : 'Cashier'); ?></th><th>Txns</th><th>Revenue</th><th>ATV<?php echo $fx['view'] === PS_FXR_BREAKDOWN ? '' : ' (' . $h($fx['base']) . ')'; ?></th></tr></thead>
                 <tbody>
                 <?php foreach ($result['rows'] as $row): ?>
                     <tr>

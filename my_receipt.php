@@ -407,6 +407,7 @@ if ($invoice_number) {
                 </tr>
             </table>
             <div class="accent">&nbsp;</div>
+            ' . (trim((string)($receipt_info['dine_option'] ?? '')) !== '' && (require_once __DIR__ . '/includes/dine_option.php') ? '<p class="invoice-label">' . $esc(strtoupper(psDineOptionLabel($receipt_info['dine_option']))) . '</p>' : '') . '
             ' . (trim((string)($receipt_info['order_no'] ?? '')) !== '' ? '<p class="invoice-label">ORDER</p><p class="invoice-number">' . $esc($receipt_info['order_no']) . '</p>' : '') . '
             <p class="invoice-label">INVOICE · COPY</p>
             <p class="invoice-number">' . $esc($invoice_number) . '</p>

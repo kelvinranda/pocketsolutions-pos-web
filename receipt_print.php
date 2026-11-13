@@ -196,6 +196,9 @@ mysqli_close($conn);
                 <?php if (trim((string)($receipt_info['order_no'] ?? '')) !== ''): ?>
                     <div style="font-size:15px;font-weight:800;letter-spacing:.04em;margin:4px 0">ORDER <?php echo $esc($receipt_info['order_no']); ?></div>
                 <?php endif; ?>
+                <?php if (trim((string)($receipt_info['dine_option'] ?? '')) !== ''): require_once __DIR__ . '/includes/dine_option.php'; ?>
+                    <div style="font-size:14px;font-weight:800;letter-spacing:.06em;margin:2px 0">*** <?php echo $esc(strtoupper(psDineOptionLabel($receipt_info['dine_option']))); ?> ***</div>
+                <?php endif; ?>
                 <div class="muted">INVOICE <?php echo $esc($invoice_number); ?></div>
                 <div style="font-weight:800;margin-top:4px;letter-spacing:.06em">*** COPY<?php echo $reprintNo > 0 ? ' · REPRINT ' . (int)$reprintNo : ''; ?> ***</div>
                 <div class="muted">Reprinted <?php echo $esc(date('Y-m-d H:i')); ?> · approved by <?php echo $esc($approvedBy); ?></div>

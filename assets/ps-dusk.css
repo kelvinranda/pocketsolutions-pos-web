@@ -1356,3 +1356,30 @@ html[data-theme] body.ps-pos .held-row .held-resume {
   border: 0;
 }
 html[data-theme] body.ps-pos .held-row .held-resume:hover:not(:disabled) { background: var(--ps-yellow-hi); }
+
+/* ---------- 2026-11-13: restaurants — Sit in / Take away on the pay sheet ---------- */
+html[data-theme] body.ps-pos .dine-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+html[data-theme] body.ps-pos .dine-btn {
+  min-height: 52px;
+  border-radius: var(--ps-radius-control);
+  border: 1px solid var(--ps-line-strong);
+  background: var(--ps-card);
+  color: var(--ps-text);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+html[data-theme] body.ps-pos .dine-btn:hover:not(:disabled) { background: var(--ps-card-2); }
+html[data-theme] body.ps-pos .dine-btn.is-on {
+  background: var(--ps-yellow);
+  color: var(--ps-yellow-ink);
+  border-color: var(--ps-yellow);
+}
+html[data-theme] body.ps-pos .dine-btn:focus-visible { outline: 2px solid var(--ps-yellow); outline-offset: 2px; }
+html[data-theme] body.ps-pos .dine-btn:disabled { opacity: .6; cursor: default; }

@@ -153,6 +153,11 @@ function psPickingSlipText(array $hdr, array $items, string $copyLabel = ''): st
     } else {
         $t .= $line;
     }
+    // 2026-11-13: Sit in / Take away, big, under the order number.
+    if (!empty($hdr['dine'])) {
+        require_once __DIR__ . '/dine_option.php';
+        $t .= psDineOptionReceiptLine((string)$hdr['dine'], $w);
+    }
     $t .= 'Sale ref: ' . $hdr['invoice'] . "\n";
     $t .= 'Date    : ' . $hdr['date'] . "\n";
     $t .= 'Branch  : ' . (function_exists('psBranchLabel') ? psBranchLabel($hdr['branch']) : $hdr['branch']) . "\n";

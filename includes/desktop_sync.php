@@ -20,6 +20,7 @@ require_once __DIR__ . '/product_master.php';
 require_once __DIR__ . '/cash_movement.php';
 require_once __DIR__ . '/tax.php';
 require_once __DIR__ . '/order_number.php';
+require_once __DIR__ . '/dine_option.php'; // 2026-11-13
 
 const PS_DT_PAIRING_HOURS = 24;
 const PS_DT_SOURCE = 'DESKTOP';
@@ -499,6 +500,8 @@ function psDtCatalogue(mysqli $conn, array $till): array
         })(),
         // 2026-10-31: restaurant order numbers (the till numbers its own orders T01-001 … per till session).
         'order_numbers' => psOrderNumbersEnabled($conn, (string)$till['company_name']),
+        // 2026-11-13: restaurants — the till asks Sit in / Take away on every sale.
+        'dine_option' => psDineOptionEnabled($conn, (string)$till['company_name']),
         // 2026-11-02: company role permissions {role: {key: bool}} (Role Permissions on the web).
         'role_permissions' => (function () use ($conn, $till) {
             require_once __DIR__ . '/role_permissions.php';
@@ -1452,6 +1455,11 @@ function psDtPushSale(mysqli $conn, array $till, array $ev, string $uuid, array 
     // 2026-10-31: the till's own order number (T01-007), kept as sent; older tills send none.
     $tillOrderNo = psOrderNumberClean($ev['order_no'] ?? '');
     if ($tillOrderNo !== null && psOrderNumberEnsureSchema($conn) && !psOrderNumberSave($conn, $invStr, $tillOrderNo)) {
+        return ['status' => 'retry', 'error' => 'Sale header could not be saved.'];
+    }
+    // 2026-11-13: Sit in / Take away as chosen on the till (kept as sent, even if the switch changed since).
+    $tillDine = psDineOptionClean($ev['dine_option'] ?? '');
+    if ($tillDine !== null && psDineOptionEnsureSchema($conn) && !psDineOptionSave($conn, $invStr, $tillDine)) {
         return ['status' => 'retry', 'error' => 'Sale header could not be saved.'];
     }
     if (psFxHasColumn($conn, 'online_sales_ref', 'currency')) {

@@ -66,6 +66,21 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['invoice_logo_
     }
     $_POST = [];
 }
+// 2026-11-13: company switch — Sit in / Take away on every sale (admin).
+require_once __DIR__ . '/includes/dine_option.php';
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['dine_option_mode'])) {
+    if (!psCsrfValidate()) {
+        $settingError = 'Invalid security token. Reload and try again.';
+    } else {
+        $r = psDineOptionSetEnabled($conn, $_POST['dine_option_mode'] === '1', (string)($_SESSION['logger'] ?? ''));
+        if (!empty($r['ok'])) {
+            header('Location: all_receipts.php?slip_setting=1');
+            exit;
+        }
+        $settingError = (string)$r['error'];
+    }
+    $_POST = [];
+}
 // 2026-10-31: company switch — restaurant order numbers (admin).
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['order_numbers_mode'])) {
     if (!psCsrfValidate()) {
@@ -111,6 +126,14 @@ $showOrderCol = $orderOn;
 foreach ($receipts_data as $r0) {
     if (trim((string)($r0['order_no'] ?? '')) !== '') {
         $showOrderCol = true;
+        break;
+    }
+}
+$dineOn = psDineOptionEnabled($conn);
+$showDineCol = $dineOn;
+foreach ($receipts_data as $r0) {
+    if (trim((string)($r0['dine_option'] ?? '')) !== '') {
+        $showDineCol = true;
         break;
     }
 }
@@ -164,6 +187,16 @@ $needsApproval = psReprintNeedsApproval();
         <input type="hidden" name="order_numbers_mode" value="<?php echo $orderOn ? '0' : '1'; ?>">
         <button type="submit" class="ps-btn <?php echo $orderOn ? 'ps-btn-outline' : 'ps-btn-default'; ?>"><?php echo $orderOn ? 'Turn off' : 'Turn on'; ?></button>
     </form>
+    <form method="post" action="all_receipts.php" class="ps-card" style="padding:14px 16px;margin:12px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <?php echo psCsrfField(); ?>
+        <div style="flex:1;min-width:260px">
+            <strong>Sit in / Take away:</strong> <?php echo $dineOn ? 'On' : 'Off'; ?>
+            <div class="ps-field-hint">For restaurants: the cashier must choose Sit in or Take away on the pay screen of every till (web, Windows and phone).
+                It is printed big on the receipt and the picking slip, shown on this list and totalled in the sales reports.</div>
+        </div>
+        <input type="hidden" name="dine_option_mode" value="<?php echo $dineOn ? '0' : '1'; ?>">
+        <button type="submit" class="ps-btn <?php echo $dineOn ? 'ps-btn-outline' : 'ps-btn-default'; ?>"><?php echo $dineOn ? 'Turn off' : 'Turn on'; ?></button>
+    </form>
     <form method="post" action="all_receipts.php" enctype="multipart/form-data" class="ps-card" style="padding:14px 16px;margin:12px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
         <?php echo psCsrfField(); ?>
         <div style="flex:1;min-width:260px">
@@ -195,6 +228,7 @@ $needsApproval = psReprintNeedsApproval();
         <thead>
             <tr>
                 <?php if ($showOrderCol): ?><th>Order</th><?php endif; ?>
+                <?php if ($showDineCol): ?><th>Sit in / Take away</th><?php endif; ?>
                 <th>Invoice</th>
                 <th>Customer</th>
                 <th>Total</th>
@@ -220,6 +254,7 @@ $needsApproval = psReprintNeedsApproval();
                     ?>
                     <tr>
                         <?php if ($showOrderCol): ?><td class="nowrap"><strong><?php echo htmlspecialchars((string)($row['order_no'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></strong></td><?php endif; ?>
+                        <?php if ($showDineCol): ?><td class="nowrap"><?php echo htmlspecialchars(psDineOptionLabel($row['dine_option'] ?? null), ENT_QUOTES, 'UTF-8'); ?></td><?php endif; ?>
                         <td><?php echo $invEsc; ?></td>
                         <td><?php echo htmlspecialchars((string)($row['customer'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
                         <td class="num"><?php echo psFxrOne($conn, $fxR, $row['currency'] ?? null, $row['totalz'] ?? '0', $row['base_total'] ?? null, ['rate' => (string)($row['fx_rate'] ?? '')]); ?></td>

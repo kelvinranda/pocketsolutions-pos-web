@@ -10,6 +10,7 @@ require_once __DIR__ . '/includes/zimra.php';
 require_once __DIR__ . '/includes/currency.php';
 require_once __DIR__ . '/includes/picking_slip.php';
 require_once __DIR__ . '/includes/order_number.php';
+require_once __DIR__ . '/includes/dine_option.php'; // 2026-11-13 Sit in / Take away
 require_once __DIR__ . '/includes/loyalty.php';
 require_once __DIR__ . '/includes/product_packs.php';
 
@@ -142,6 +143,19 @@ function psCompleteSale(mysqli $conn, array $post): array
     $orderNumbers = psOrderNumbersEnabled($conn);
     if ($orderNumbers && !psOrderNumberEnsureSchema($conn)) {
         return ['success' => false, 'error' => 'Payment could not be completed. Please try again.'];
+    }
+    // 2026-11-13: restaurants — Sit in / Take away (company setting): required on every sale when it is on.
+    $dineOn = psDineOptionEnabled($conn);
+    $dineOption = psDineOptionClean($post['dine_option'] ?? '');
+    if ($dineOn) {
+        if ($dineOption === null) {
+            return ['success' => false, 'error' => 'Choose Sit in or Take away.'];
+        }
+        if (!psDineOptionEnsureSchema($conn)) {
+            return ['success' => false, 'error' => 'Payment could not be completed. Please try again.'];
+        }
+    } else {
+        $dineOption = null;
     }
 
     // Customer confirmation (2026-10-24): the till sends the fingerprint of the order the customer approved.
@@ -462,6 +476,10 @@ function psCompleteSale(mysqli $conn, array $post): array
             return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
         }
     }
+    if ($dineOption !== null && !psDineOptionSave($conn, (string)$invoiceNumber, $dineOption)) {
+        error_log('sale: dine option was not saved');
+        return psSaleAbort($conn, true, 'Payment could not be completed. Please try again.');
+    }
 
     foreach ($cartSale['lines'] as $item) {
         $productId = mysqli_real_escape_string($conn, $item['product_id']);
@@ -649,6 +667,7 @@ function psCompleteSale(mysqli $conn, array $post): array
     // 2026-10-31: the selling company's name (it was hard-coded "EARTHQUIP" for every company).
     $receipt = strtoupper($company !== '' ? $company : 'RECEIPT') . "\n";
     $receipt .= $orderNo !== '' ? psOrderNumberReceiptBlock($orderNo) : "--------------------------------\n";
+    $receipt .= psDineOptionReceiptLine($dineOption);
     $receipt .= "Invoice : $invoiceNumber\n";
     $receipt .= 'Customer: ' . $customer['name'] . "\n";
     $receipt .= 'Cashier : ' . $cashierEmail . "\n";
@@ -716,7 +735,7 @@ function psCompleteSale(mysqli $conn, array $post): array
     if ($pickingSlip) {
         $slipText = psPickingSlipText(
             ['invoice' => (string)$invoiceNumber, 'date' => $now, 'branch' => $branch, 'cashier' => $cashierEmail,
-             'customer' => $customer['id'] !== null ? (string)$customer['name'] : '', 'order' => $orderNo],
+             'customer' => $customer['id'] !== null ? (string)$customer['name'] : '', 'order' => $orderNo, 'dine' => $dineOption],
             psPickingSlipGroup($cartSale['lines'])
         );
         if (!psPickingSlipQueue($conn, (string)$invoiceNumber, $slipText)) {
@@ -751,13 +770,16 @@ function psCompleteSale(mysqli $conn, array $post): array
 
     return [
         'success' => true,
-        'message' => "✅ Sale completed successfully!\n\n" . ($orderNo !== '' ? 'ORDER ' . $orderNo . "\n" : '') . 'Invoice No: ' . $invoiceNumber
+        'message' => "✅ Sale completed successfully!\n\n" . ($orderNo !== '' ? 'ORDER ' . $orderNo . "\n" : '')
+            . ($dineOption !== null ? strtoupper(psDineOptionLabel($dineOption)) . "\n" : '') . 'Invoice No: ' . $invoiceNumber
             . ($pickingSlip ? "\nThe receipt and the storeroom picking slip have been queued for printing." : "\nThe receipt has been queued for printing.")
             . ($redeem['points'] > 0 ? "\nLoyalty points used: " . $redeem['points'] : '')
             . (!empty($loyaltyPosted['earned']) ? "\nLoyalty points earned: " . (int)$loyaltyPosted['earned'] : '')
             . $zimraNote,
         'invoice_number' => $invoiceNumber,
         'order_number' => $orderNo,
+        'dine_option' => $dineOption,
+        'dine_label' => psDineOptionLabel($dineOption),
         'picking_slip' => $pickingSlip,
         'loyalty' => ['used' => (int)$redeem['points'], 'earned' => (int)($loyaltyPosted['earned'] ?? 0)],
         'currency' => $saleCurrency,

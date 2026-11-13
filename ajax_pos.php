@@ -90,6 +90,8 @@ if ($posConn) {
     $posAllowNegative = psCompanyAllowsNegativeStock($posConn); // 2026-10-18: company switch (Opening Stock page)
     $posSplitCurrency = psCompanySplitCurrency($posConn); // 2026-11-06: company switch (Exchange Rates page)
     $posSplitPayment = psCompanySplitPayment($posConn); // 2026-11-06: company switch (Exchange Rates page)
+    require_once __DIR__ . '/includes/dine_option.php';
+    $posDineOn = psDineOptionEnabled($posConn); // 2026-11-13: Sit in / Take away (Receipts page switch)
     // 2026-10-20: currencies this company sells in, with the rate in force now (the sale re-checks it).
     require_once __DIR__ . '/includes/currency.php';
     if (psFxEnsureSchema($posConn)) {
@@ -532,6 +534,14 @@ $mayRefund = trim((string)($_SESSION['logger'] ?? '')) !== '';
             <div class="total"><span>Subtotal</span><span id="paySubtotal">$0.00</span></div>
             <div class="total"><span>Total</span><span id="payTotal">$0.00</span></div>
             <p class="hint" id="payContext"></p>
+            <?php if (!empty($posDineOn)): ?>
+            <!-- 2026-11-13: restaurants — Sit in / Take away, chosen on every sale -->
+            <div class="kicker" id="dineLabel">Sit in or Take away?</div>
+            <div class="dine-row" role="radiogroup" aria-labelledby="dineLabel">
+                <button type="button" class="dine-btn" data-dine="SIT_IN" role="radio" aria-checked="false" onclick="pickDine('SIT_IN')">Sit in</button>
+                <button type="button" class="dine-btn" data-dine="TAKE_AWAY" role="radio" aria-checked="false" onclick="pickDine('TAKE_AWAY')">Take away</button>
+            </div>
+            <?php endif; ?>
             <div class="kicker">Payment method</div>
             <select class="field" id="paymentMethod" aria-label="Payment method" onchange="onPaymentMethod()">
                 <?php foreach (psPaymentMethods() as $code => $label) { ?>
@@ -1558,6 +1568,23 @@ function isSplit() { return extraTenders.length > 0; }
 const POS_SPLIT_CURRENCY = <?php echo ($posSplitCurrency ?? true) ? 'true' : 'false'; ?>;
 // 2026-11-06: split payment ("Add another payment") is a company setting too; off = one payment per sale.
 const POS_SPLIT_PAYMENT = <?php echo ($posSplitPayment ?? true) ? 'true' : 'false'; ?>;
+// 2026-11-13: restaurants — Sit in / Take away must be chosen on every sale when the company has it on.
+const POS_DINE_ON = <?php echo !empty($posDineOn) ? 'true' : 'false'; ?>;
+let dineChoice = '';
+function syncDineUi() {
+    document.querySelectorAll('.dine-btn').forEach(function (b) {
+        const on = b.getAttribute('data-dine') === dineChoice;
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+}
+function pickDine(v) {
+    if (saleBusy) return;
+    dineChoice = v;
+    serverPayError = '';
+    syncDineUi();
+    syncPayForm();
+}
 function sellableCodes() {
     if (!POS_SPLIT_CURRENCY) return [posCur];
     return Object.keys(POS_FX.currencies).filter(function (k) { return k === POS_FX.base || POS_FX.currencies[k].ok; });
@@ -1719,6 +1746,7 @@ function payIssues() {
     const lines = cartLines();
     const totalCents = cartTotalCents();
     const method = (document.getElementById('paymentMethod').value || '').trim();
+    if (POS_DINE_ON && lines.length && !dineChoice) return { ready: false, message: 'Choose Sit in or Take away.' };
     if (lines.length && isSplit()) {
         if (method === 'CREDIT') return { ready: false, message: 'Credit (account) cannot be combined with other payments.' };
         const f = splitFigures();
@@ -1982,6 +2010,7 @@ function setPayLocked(locked) {
     document.querySelectorAll('#splitRows select, #splitRows input, #splitRows button').forEach(function (el) { el.disabled = locked; });
     document.querySelectorAll('[data-pay]').forEach(function (btn) { btn.disabled = locked; });
     document.querySelectorAll('[data-quick]').forEach(function (btn) { btn.disabled = locked; });
+    document.querySelectorAll('.dine-btn').forEach(function (btn) { btn.disabled = locked; });
     if (locked) {
         const confirmBtn = document.getElementById('payConfirm');
         confirmBtn.disabled = true;
@@ -2289,6 +2318,7 @@ function submitSale() {
     if (posQuote) {
         postData.quotation_id = posQuote.id;
     }
+    if (POS_DINE_ON) postData.dine_option = dineChoice; // 2026-11-13
     // 2026-11-05 split payment / split currency: every payment in its own currency, and the change currency.
     if (isSplit()) {
         postData.payments = JSON.stringify(allTenders().map(function (t) {
@@ -2334,6 +2364,8 @@ function submitSale() {
                 cart = [];
                 resetTicket();
                 clearPosCustomer();
+                dineChoice = ''; // 2026-11-13: asked again on the next sale
+                syncDineUi();
                 closePaySheet(true);
                 renderCart();
                 showSaleDone(jsonResponse);
@@ -2598,6 +2630,8 @@ function confirmDiscardCart() {
                 cart = [];
                 resetTicket();
                 clearPosCustomer();
+                dineChoice = '';
+                syncDineUi();
                 renderCart();
                 closeDiscardCart();
                 showOrderNotice(jsonResponse.message || 'Cart cleared.');

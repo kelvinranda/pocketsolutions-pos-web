@@ -111,6 +111,9 @@ $customer = trim((string)($hdr['customer'] ?? ''));
             <?php if (trim((string)($hdr['order_no'] ?? '')) !== ''): ?>
                 <div class="center" style="font-size:16px;font-weight:800;letter-spacing:.04em;margin:6px 0">ORDER <?php echo $esc($hdr['order_no']); ?></div>
             <?php endif; ?>
+            <?php if (trim((string)($hdr['dine_option'] ?? '')) !== ''): require_once __DIR__ . '/includes/dine_option.php'; ?>
+                <div class="center" style="font-size:15px;font-weight:800;letter-spacing:.06em;margin:2px 0">*** <?php echo $esc(strtoupper(psDineOptionLabel($hdr['dine_option']))); ?> ***</div>
+            <?php endif; ?>
             <hr class="rule">
             <div class="muted">
                 Sale ref: <strong><?php echo $esc($invoice); ?></strong><br>
